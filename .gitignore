@@ -1,0 +1,29 @@
+# Build artifacts
+tmp/
+assistant
+
+# Xcode build output (CONFIGURATION_BUILD_DIR = SRCROOT)
+clawd.app/
+clawd.swiftmodule/
+
+# Working directory (user data)
+working/
+
+# Sensitive / generated data files (safety net if placed outside working/)
+config.json
+calendar.json
+calendar_cache.json
+index_map.json
+notes.index
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+clawd.xcodeproj/xcuserdata/
+clawd.xcodeproj/project.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
