@@ -54,8 +54,10 @@ bool Config::load(const std::string& path) {
     backend_api_url              = json_string(root, "backend_api_url");
     backend_api_key              = json_string(root, "backend_api_key");
     backend_api_model            = json_string(root, "backend_api_model");
+    embedding_mode               = json_string(root, "embedding_mode", "remote");
     embedding_url                = json_string(root, "embedding_url");
     embedding_model              = json_string(root, "embedding_model");
+    embedding_model_path         = json_string(root, "embedding_model_path");
     assistant_name               = json_string(root, "assistant_name", "ClawD");
     assistant_emoji              = json_string(root, "assistant_emoji");
     thinking_emoji               = json_string(root, "thinking_emoji");

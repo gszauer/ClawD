@@ -1,6 +1,6 @@
 CXX      := clang++
 CC       := clang
-CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -Icore
+CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -Icore -Ideps/include
 CFLAGS   := -Wall -Wextra -O2 -Icore
 
 # Disable SIMD vectorization in HNSWLIB for portability (works on both x86 and ARM)
@@ -24,6 +24,7 @@ CXX_SRCS := config.cpp \
             backend.cpp \
             task_queue.cpp \
             calendar.cpp \
+            local_embed.cpp \
             core.cpp \
             main.cpp
 
@@ -34,10 +35,18 @@ CXX_OBJS := $(addprefix $(TMPDIR)/,$(CXX_SRCS:.cpp=.o))
 C_OBJS   := $(addprefix $(TMPDIR)/,$(C_SRCS:.c=.o))
 OBJS     := $(CXX_OBJS) $(C_OBJS)
 
+# llama.cpp static libraries (pre-built in deps/lib/)
+LLAMA_LIBS := deps/lib/libllama.a \
+              deps/lib/libggml.a \
+              deps/lib/libggml-base.a \
+              deps/lib/libggml-cpu.a \
+              deps/lib/libggml-blas.a
+LDFLAGS    := -framework Accelerate -framework Foundation -lstdc++
+
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LLAMA_LIBS) $(LDFLAGS)
 
 # Suppress warnings from third-party HNSWLIB headers
 $(TMPDIR)/note_search.o: $(SRCDIR)/note_search.cpp | $(TMPDIR)

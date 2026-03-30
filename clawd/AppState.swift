@@ -47,8 +47,10 @@ final class AppState {
     var backendApiUrl: String = ""
     var backendApiKey: String = ""
     var backendApiModel: String = ""
+    var embeddingMode: String = "remote"
     var embeddingUrl: String = "http://localhost:1234/v1/embeddings"
     var embeddingModel: String = "text-embedding-embeddinggemma-300m"
+    var embeddingModelPath: String = ""
     var assistantName: String = "ClawD"
     var assistantEmoji: String = "🦀"
     var discordBotToken: String = ""
@@ -96,8 +98,10 @@ final class AppState {
         backendApiUrl = json["backend_api_url"] as? String ?? ""
         backendApiKey = json["backend_api_key"] as? String ?? ""
         backendApiModel = json["backend_api_model"] as? String ?? ""
+        embeddingMode = json["embedding_mode"] as? String ?? "remote"
         embeddingUrl = json["embedding_url"] as? String ?? ""
         embeddingModel = json["embedding_model"] as? String ?? ""
+        embeddingModelPath = json["embedding_model_path"] as? String ?? ""
         assistantName = json["assistant_name"] as? String ?? "ClawD"
         assistantEmoji = json["assistant_emoji"] as? String ?? "🦀"
         discordBotToken = json["discord_bot_token"] as? String ?? ""
@@ -141,8 +145,10 @@ final class AppState {
             "backend_api_url": backendApiUrl,
             "backend_api_key": backendApiKey,
             "backend_api_model": backendApiModel,
+            "embedding_mode": embeddingMode,
             "embedding_url": embeddingUrl,
             "embedding_model": embeddingModel,
+            "embedding_model_path": embeddingModelPath,
             "assistant_name": assistantName,
             "assistant_emoji": assistantEmoji,
             "discord_bot_token": discordBotToken,

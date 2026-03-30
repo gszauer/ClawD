@@ -11,6 +11,7 @@
 #include "task_queue.h"
 #include "calendar.h"
 #include "http_client.h"
+#include "local_embed.h"
 #include "cJSON.h"
 
 #include <memory>
@@ -49,6 +50,12 @@ static const int HEARTBEAT_TIMER = 1;
 // --- Helpers ---
 
 static std::vector<float> embed_text(const std::string& text) {
+    // Local mode: use bert.cpp
+    if (g_config.embedding_mode == "local") {
+        return local_embed_compute(text);
+    }
+
+    // Remote mode: call embedding API
     if (g_config.embedding_url.empty()) return {};
 
     cJSON* req = cJSON_CreateObject();
@@ -380,6 +387,11 @@ void core_initialize(const char* config_path, PlatformCallbacks callbacks,
     // Chat history
     g_chat = std::make_unique<ChatHistory>(wd + "/chat");
 
+    // Local embeddings (bert.cpp)
+    if (g_config.embedding_mode == "local" && !g_config.embedding_model_path.empty()) {
+        local_embed_init(g_config.embedding_model_path);
+    }
+
     // Note search
     g_note_search = std::make_unique<NoteSearch>();
     // Try to detect embedding dimension from existing index, or leave for lazy init
@@ -425,6 +437,7 @@ void core_initialize(const char* config_path, PlatformCallbacks callbacks,
 }
 
 void core_shutdown() {
+    local_embed_shutdown();
     if (g_note_search) g_note_search->save();
     g_prompt.reset();
     g_tools.reset();
@@ -578,7 +591,20 @@ void core_on_timer_fired(int timer_id) {
 }
 
 void core_on_config_changed() {
+    std::string old_embed_mode = g_config.embedding_mode;
+    std::string old_embed_path = g_config.embedding_model_path;
+
     g_config.load(g_config_path);
+
+    // Re-init local embeddings if mode or path changed
+    if (g_config.embedding_mode != old_embed_mode ||
+        g_config.embedding_model_path != old_embed_path) {
+        local_embed_shutdown();
+        if (g_config.embedding_mode == "local" && !g_config.embedding_model_path.empty()) {
+            local_embed_init(g_config.embedding_model_path);
+        }
+    }
+
     // Re-populate scheduled tasks
     if (g_task_queue) {
         g_task_queue->remove_by_type(TaskType::DAILY_REPORT);

@@ -57,7 +57,9 @@ Claude is invoked with `--allowedTools WebSearch` so the AI can search the web.
 
 Semantic note search uses an embedding model to find relevant notes automatically. Without this, note search falls back to simple title matching.
 
-### LM Studio Setup
+ClawD supports two embedding modes, selectable in the **Backend** section:
+
+### Remote (default) — LM Studio or any OpenAI-compatible endpoint
 
 1. Download [LM Studio](https://lmstudio.ai/)
 2. Search for and download an embedding model (e.g. `embeddinggemma-300m`)
@@ -65,12 +67,24 @@ Semantic note search uses an embedding model to find relevant notes automaticall
 4. Load the embedding model (make sure it's listed under **Loaded Models**)
 5. Start the server (default port 1234)
 
-### ClawD Configuration
-
+Configuration:
 - **Embedding URL**: `http://localhost:1234/v1/embeddings` (default)
 - **Embedding Model**: `text-embedding-embeddinggemma-300m` (default)
 
-The app checks the embedding server on startup and shows a toast if it's unreachable. You can start ClawD without the embedding server — it'll work fine, just without semantic search.
+The app checks the embedding server on startup and shows a toast if it's unreachable.
+
+### Local — llama.cpp with a GGUF model
+
+Runs the embedding model directly in the app using llama.cpp. No external server needed.
+
+The llama.cpp static libraries are included in `deps/` — no extra setup required.
+
+1. Set the Embedding toggle to **local**
+2. Click **Download** to fetch nomic-embed-text-v1.5 (262 MB) into the working directory, or **Browse** to select your own GGUF file
+3. Click **Save Config**, then **Start** (or restart)
+4. Go to the **Notes** tab and click the reindex button to re-embed notes with the local model
+
+You can switch between remote and local freely. After switching, reindex your notes so the embeddings are consistent.
 
 ---
 

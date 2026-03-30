@@ -281,14 +281,27 @@
 					"$(inherited)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/core";
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/core",
+					"$(SRCROOT)/deps/include",
+				);
 				INFOPLIST_KEY_CFBundleDisplayName = ClawD;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/deps/lib";
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-lllama",
+					"-lggml",
+					"-lggml-base",
+					"-lggml-cpu",
+					"-lggml-blas",
+					"-framework",
+					Accelerate,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.gabormakesgames.clawd;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -319,14 +332,27 @@
 					"$(inherited)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/core";
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/core",
+					"$(SRCROOT)/deps/include",
+				);
 				INFOPLIST_KEY_CFBundleDisplayName = ClawD;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/deps/lib";
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-lllama",
+					"-lggml",
+					"-lggml-base",
+					"-lggml-cpu",
+					"-lggml-blas",
+					"-framework",
+					Accelerate,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.gabormakesgames.clawd;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

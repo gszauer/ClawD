@@ -6,8 +6,10 @@ struct GeneralTab: View {
     @Bindable private var core = CoreBridge.shared
     @Bindable private var discord = DiscordService.shared
     @State private var statusMessage = ""
+    @State private var isDownloadingModel = false
 
     private let backends = ["claude", "gemini", "codex", "local"]
+    private let embeddingModes = ["remote", "local"]
 
     private var calendarJsonExists: Bool {
         FileManager.default.fileExists(atPath: "\(state.workingDirectory)/calendar.json")
@@ -65,7 +67,8 @@ struct GeneralTab: View {
 
                 // --- Backend ---
                 GroupBox("Backend") {
-                    LabeledContent("Backend") {
+                    HStack {
+                        Text("Backend")
                         Picker("", selection: $state.backend) {
                             ForEach(backends, id: \.self) { Text($0) }
                         }
@@ -76,6 +79,15 @@ struct GeneralTab: View {
                                 state.backendCliPath = path
                             }
                         }
+
+                        Spacer()
+
+                        Text("Embedding")
+                        Picker("", selection: $state.embeddingMode) {
+                            ForEach(embeddingModes, id: \.self) { Text($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 150)
                     }
 
                     if state.backend == "local" {
@@ -102,15 +114,36 @@ struct GeneralTab: View {
                         }
                     }
 
-                    LabeledContent("Embedding URL") {
-                        TextField("http://localhost:1234/v1/embeddings",
-                                  text: $state.embeddingUrl)
-                        .textFieldStyle(.roundedBorder)
-                    }
-                    LabeledContent("Embedding Model") {
-                        TextField("text-embedding-nomic-embed-text-v1.5",
-                                  text: $state.embeddingModel)
-                        .textFieldStyle(.roundedBorder)
+                    if state.embeddingMode == "remote" {
+                        LabeledContent("Embedding URL") {
+                            TextField("http://localhost:1234/v1/embeddings",
+                                      text: $state.embeddingUrl)
+                            .textFieldStyle(.roundedBorder)
+                        }
+                        LabeledContent("Embedding Model") {
+                            TextField("text-embedding-nomic-embed-text-v1.5",
+                                      text: $state.embeddingModel)
+                            .textFieldStyle(.roundedBorder)
+                        }
+                    } else {
+                        LabeledContent("Model (GGUF)") {
+                            HStack {
+                                TextField("Path to .gguf file", text: $state.embeddingModelPath)
+                                    .textFieldStyle(.roundedBorder)
+                                Button("Browse...") { browseGgufModel() }
+                                Button("Download") { downloadDefaultModel() }
+                                    .disabled(isDownloadingModel)
+                            }
+                        }
+                        if isDownloadingModel {
+                            HStack {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Downloading nomic-embed-text-v1.5.f16.gguf (262 MB)...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
 
@@ -352,6 +385,52 @@ struct GeneralTab: View {
                 AppState.shared.showToast("Config loaded from new directory")
             }
         }
+    }
+
+    private func browseGgufModel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.data]
+        panel.message = "Select a GGUF embedding model"
+        if panel.runModal() == .OK, let url = panel.url {
+            state.embeddingModelPath = url.path
+        }
+    }
+
+    private func downloadDefaultModel() {
+        guard let url = URL(string: "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf") else { return }
+        let destPath = "\(state.workingDirectory)/nomic-embed-text-v1.5.f16.gguf"
+
+        // Skip if already downloaded
+        if FileManager.default.fileExists(atPath: destPath) {
+            state.embeddingModelPath = destPath
+            AppState.shared.showToast("Model already exists — path set")
+            return
+        }
+
+        isDownloadingModel = true
+        let task = URLSession.shared.downloadTask(with: url) { tempUrl, response, error in
+            DispatchQueue.main.async {
+                isDownloadingModel = false
+                if let error {
+                    AppState.shared.showToast("Download failed: \(error.localizedDescription)", isError: true)
+                    return
+                }
+                guard let tempUrl else { return }
+                let dest = URL(fileURLWithPath: destPath)
+                do {
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.moveItem(at: tempUrl, to: dest)
+                    state.embeddingModelPath = destPath
+                    AppState.shared.showToast("Model downloaded to working directory")
+                } catch {
+                    AppState.shared.showToast("Failed to save model: \(error.localizedDescription)", isError: true)
+                }
+            }
+        }
+        task.resume()
     }
 
     private func browseServiceAccount() {
