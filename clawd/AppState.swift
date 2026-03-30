@@ -6,8 +6,12 @@ import SwiftUI
 final class AppState {
     static let shared = AppState()
 
-    var configPath: String = ""
     var workingDirectory: String = ""
+
+    var configPath: String {
+        let wd = workingDirectory.isEmpty ? AppState.defaultWorkingDirectory : workingDirectory
+        return wd + "/config.json"
+    }
 
     // Editing state — blocks tab switching and other actions
     var isEditing = false
@@ -82,9 +86,8 @@ final class AppState {
 
     // MARK: - Config I/O
 
-    func loadConfig(from path: String) {
-        configPath = path
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+    func loadConfig() {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
 
@@ -106,7 +109,6 @@ final class AppState {
         heartbeatIntervalSeconds = json["heartbeat_interval_seconds"] as? Int ?? 30
         noteSearchResults = json["note_search_results"] as? Int ?? 5
         maxNotesInIndex = json["max_notes_in_index"] as? Int ?? 10000
-        workingDirectory = json["working_directory"] as? String ?? ""
 
         if let notifs = json["notifications"] as? [String: [String: Any]] {
             if let dr = notifs["daily_report"] {
@@ -151,7 +153,6 @@ final class AppState {
             "heartbeat_interval_seconds": heartbeatIntervalSeconds,
             "note_search_results": noteSearchResults,
             "max_notes_in_index": maxNotesInIndex,
-            "working_directory": workingDirectory,
             "notifications": [
                 "daily_report": [
                     "enabled": dailyReportEnabled,
@@ -179,8 +180,7 @@ final class AppState {
         guard let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)
         else { return }
 
-        let path = configPath.isEmpty ? (workingDirectory.isEmpty ? "./working" : workingDirectory) + "/../config.json" : configPath
-        try? data.write(to: URL(fileURLWithPath: path))
+        try? data.write(to: URL(fileURLWithPath: configPath))
 
         // Notify core of config change
         if CoreBridge.shared.isRunning {

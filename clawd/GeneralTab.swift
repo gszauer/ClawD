@@ -61,13 +61,6 @@ struct GeneralTab: View {
                             Button("Browse...") { browseDirectory() }
                         }
                     }
-                    LabeledContent("Config File") {
-                        HStack {
-                            TextField("config.json", text: $state.configPath)
-                                .textFieldStyle(.roundedBorder)
-                            Button("Load") { loadConfig() }
-                        }
-                    }
                 }
 
                 // --- Backend ---
@@ -277,17 +270,15 @@ struct GeneralTab: View {
                 state.workingDirectory = AppState.defaultWorkingDirectory
             }
             let wd = state.workingDirectory
-            let cfg = state.configPath.isEmpty ? "\(wd)/config.json" : state.configPath
-            state.configPath = cfg
 
             // Ensure working directory exists
             try? FileManager.default.createDirectory(
                 atPath: wd, withIntermediateDirectories: true)
 
             state.saveConfig()
-            core.start(configPath: cfg, workingDir: wd)
+            core.start(configPath: state.configPath, workingDir: wd)
             print("[clawd] Working directory: \(wd)")
-            print("[clawd] Config path: \(cfg)")
+            print("[clawd] Config path: \(state.configPath)")
             state.refreshData()
 
             // Check embedding endpoint
@@ -348,12 +339,6 @@ struct GeneralTab: View {
         }.resume()
     }
 
-    private func loadConfig() {
-        let path = state.configPath.isEmpty ? "config.json" : state.configPath
-        state.loadConfig(from: path)
-        statusMessage = "Config loaded from \(path)"
-    }
-
     private func browseDirectory() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -361,6 +346,11 @@ struct GeneralTab: View {
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
             state.workingDirectory = url.path
+            // Auto-load config if it exists in the new directory
+            if FileManager.default.fileExists(atPath: state.configPath) {
+                state.loadConfig()
+                AppState.shared.showToast("Config loaded from new directory")
+            }
         }
     }
 

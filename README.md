@@ -259,6 +259,12 @@ The Xcode project is configured with:
 - `ENABLE_APP_SANDBOX = NO` — required for file and network access
 - `core/main.cpp` excluded from Xcode build (has its own `main()`)
 
+## TODO
+
+- Audio input: take audio files sent on discord, convert them, store in tmp directory, and direct LLM to check the file.
+- Image input: take image files sent on discord, convert them, store in tmp directory, and let the LLM read the file.
+
+
 ## License
 
 Personal project. Not licensed for redistribution.

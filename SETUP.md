@@ -8,7 +8,7 @@ This guide walks through configuring ClawD from scratch. After building and laun
 
 When you open ClawD for the first time:
 
-1. The **Working Directory** and **Config File** fields are pre-populated with absolute paths next to the `.app` bundle
+1. The **Working Directory** field is pre-populated with the path next to the `.app` bundle, and `config.json` is auto-loaded from it if present
 2. All other fields have sensible defaults
 3. Nothing is running yet — click **Start** when you're ready
 

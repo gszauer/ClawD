@@ -7,21 +7,14 @@ struct clawdApp: App {
         if state.workingDirectory.isEmpty {
             state.workingDirectory = AppState.defaultWorkingDirectory
         }
-        if state.configPath.isEmpty {
-            state.configPath = "\(state.workingDirectory)/config.json"
-        }
+
+        // Create working directory on first launch
+        try? FileManager.default.createDirectory(
+            atPath: state.workingDirectory, withIntermediateDirectories: true)
 
         // Auto-load config.json if it exists
-        let cfgPath = state.configPath
-        if FileManager.default.fileExists(atPath: cfgPath) {
-            state.loadConfig(from: cfgPath)
-            // Restore working directory if config didn't have one
-            if state.workingDirectory.isEmpty {
-                state.workingDirectory = AppState.defaultWorkingDirectory
-            }
-            if state.configPath.isEmpty {
-                state.configPath = cfgPath
-            }
+        if FileManager.default.fileExists(atPath: state.configPath) {
+            state.loadConfig()
         }
     }
 
