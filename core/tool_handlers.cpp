@@ -222,18 +222,33 @@ std::string EditReminderHandler::execute(const std::vector<std::string>& params)
 
 // --- Meal Handlers ---
 
+// Get all meals sorted by id (filename). Numeric prefix in filename controls order.
+static std::vector<const DataItem*> sorted_meals(DataStore* meals) {
+    std::vector<const DataItem*> result;
+    for (const auto& item : meals->items()) result.push_back(&item);
+    std::sort(result.begin(), result.end(),
+              [](const DataItem* a, const DataItem* b) { return a->id < b->id; });
+    return result;
+}
+
+// Get the meal index for a given date: day_of_year % num_meals
+static int meal_index_for_date(const std::string& date, int num_meals) {
+    if (num_meals <= 0) return -1;
+    struct tm tm_buf = {};
+    strptime(date.c_str(), "%Y-%m-%d", &tm_buf);
+    int day_of_year = tm_buf.tm_yday; // 0-based
+    return day_of_year % num_meals;
+}
+
 std::string AddMealHandler::execute(const std::vector<std::string>& params) {
     if (params.empty()) return "Error: add_meal requires at least a name";
 
     const std::string& name = params[0];
-    std::string type = params.size() > 1 ? params[1] : "home-cooked";
+    std::string type = params.size() > 1 ? params[1] : "home";
     std::string content = params.size() > 2 ? params[2] : "";
-    std::string days = params.size() > 3 ? params[3] : "";
 
     std::map<std::string, std::string> meta;
     meta["type"] = type;
-    meta["days"] = days;
-    meta["slot"] = "1";
 
     DataItem& item = ctx_->meals->add(name, meta, content);
     return "Added meal: \"" + name + "\" (" + type + ") [id: " + item.id + "]";
@@ -250,7 +265,6 @@ std::string EditMealHandler::execute(const std::vector<std::string>& params) {
     std::string body = item->body;
 
     if (params.size() > 1 && !params[1].empty()) {
-        // Update name — rebuild body with new heading
         std::string old_body = body;
         size_t nl = old_body.find('\n');
         std::string rest = (nl != std::string::npos) ? old_body.substr(nl) : "";
@@ -258,12 +272,10 @@ std::string EditMealHandler::execute(const std::vector<std::string>& params) {
     }
     if (params.size() > 2 && !params[2].empty()) meta["type"] = params[2];
     if (params.size() > 3 && !params[3].empty()) {
-        // Update content — keep heading, replace rest
         size_t nl = body.find('\n');
         std::string heading = (nl != std::string::npos) ? body.substr(0, nl) : body;
         body = heading + "\n\n" + params[3] + "\n";
     }
-    if (params.size() > 4 && !params[4].empty()) meta["days"] = params[4];
 
     ctx_->meals->update(id, meta, body);
     return "Updated meal [id: " + id + "]";
@@ -282,34 +294,27 @@ std::string DeleteMealHandler::execute(const std::vector<std::string>& params) {
 
 std::string GetMealsHandler::execute(const std::vector<std::string>& params) {
     std::string date = params.empty() ? today_date_str() : params[0];
-    int dom = day_of_month_from_date(date);
+    auto meals = sorted_meals(ctx_->meals);
+    if (meals.empty()) return "No meals in the rotation.";
 
-    auto meals = ctx_->meals->filter([dom](const DataItem& item) {
-        auto it = item.meta.find("days");
-        if (it == item.meta.end()) return false;
-        std::istringstream iss(it->second);
-        std::string token;
-        while (std::getline(iss, token, ',')) {
-            while (!token.empty() && token.front() == ' ') token.erase(token.begin());
-            while (!token.empty() && token.back() == ' ') token.pop_back();
-            try {
-                if (std::stoi(token) == dom) return true;
-            } catch (...) {}
-        }
-        return false;
-    });
-
-    if (meals.empty()) return "No meals scheduled for " + date + ".";
+    int idx = meal_index_for_date(date, static_cast<int>(meals.size()));
+    const DataItem* today = (idx >= 0) ? meals[idx] : nullptr;
 
     std::ostringstream ss;
-    ss << "Meals for " << date << ":\n";
-    for (const auto* item : meals) {
-        ss << "- " << item->title;
-        auto type_it = item->meta.find("type");
-        auto slot_it = item->meta.find("slot");
-        if (type_it != item->meta.end()) ss << " (" << type_it->second << ")";
-        if (slot_it != item->meta.end()) ss << " [slot " << slot_it->second << "]";
-        ss << " [id: " << item->id << "]\n";
+    if (today) {
+        ss << "Today's meal (" << date << ", #" << (idx + 1) << " of " << meals.size() << "): ";
+        ss << today->title;
+        auto type_it = today->meta.find("type");
+        if (type_it != today->meta.end()) ss << " (" << type_it->second << ")";
+        ss << " [id: " << today->id << "]\n\n";
+    }
+
+    ss << "Full rotation (" << meals.size() << " meals):\n";
+    for (size_t i = 0; i < meals.size(); i++) {
+        ss << (i + 1) << ". " << meals[i]->title;
+        auto type_it = meals[i]->meta.find("type");
+        if (type_it != meals[i]->meta.end()) ss << " (" << type_it->second << ")";
+        ss << " [id: " << meals[i]->id << "]\n";
     }
     return ss.str();
 }
@@ -324,11 +329,8 @@ std::string GetMealDetailsHandler::execute(const std::vector<std::string>& param
     ss << item->title << "\n";
     auto type_it = item->meta.find("type");
     if (type_it != item->meta.end()) ss << "Type: " << type_it->second << "\n";
-    auto days_it = item->meta.find("days");
-    if (days_it != item->meta.end()) ss << "Scheduled days: " << days_it->second << "\n";
     ss << "\n";
 
-    // Print body (skip the heading)
     std::string_view body = item->body;
     size_t nl = body.find('\n');
     if (nl != std::string_view::npos) {
@@ -340,38 +342,16 @@ std::string GetMealDetailsHandler::execute(const std::vector<std::string>& param
 }
 
 std::string SwapMealHandler::execute(const std::vector<std::string>& params) {
-    if (params.size() < 2) return "Error: swap_meal requires date and slot";
+    std::string date = params.empty() ? today_date_str() : params[0];
+    auto meals = sorted_meals(ctx_->meals);
+    if (meals.empty()) return "No meals in the rotation.";
 
-    std::string date = params[0];
-    int target_slot = 0;
-    try { target_slot = std::stoi(params[1]); } catch (...) {}
+    int idx = meal_index_for_date(date, static_cast<int>(meals.size()));
+    int next_idx = (idx + 1) % static_cast<int>(meals.size());
 
-    int dom = day_of_month_from_date(date);
-
-    // Find a meal that has this day but a different slot, or any meal not on this day
-    auto current = ctx_->meals->filter([dom, target_slot](const DataItem& item) {
-        auto days_it = item.meta.find("days");
-        auto slot_it = item.meta.find("slot");
-        if (days_it == item.meta.end()) return false;
-
-        int slot = slot_it != item.meta.end() ? std::atoi(slot_it->second.c_str()) : 0;
-        if (slot != target_slot) return false;
-
-        std::istringstream iss(days_it->second);
-        std::string token;
-        while (std::getline(iss, token, ',')) {
-            while (!token.empty() && token.front() == ' ') token.erase(token.begin());
-            while (!token.empty() && token.back() == ' ') token.pop_back();
-            try { if (std::stoi(token) == dom) return true; } catch (...) {}
-        }
-        return false;
-    });
-
-    if (current.empty()) return "No meal found in slot " + params[1] + " on " + date;
-
-    return "Swap meal feature requires choosing an alternative. "
-           "Current meal in slot " + params[1] + ": " + current[0]->title +
-           " [id: " + current[0]->id + "]";
+    return "Skipped \"" + meals[idx]->title + "\", "
+           "today's meal is now: " + meals[next_idx]->title +
+           " [id: " + meals[next_idx]->id + "]";
 }
 
 // --- Chore Handlers ---

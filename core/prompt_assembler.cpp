@@ -248,45 +248,33 @@ std::string PromptAssembler::build_chores_context() const {
 }
 
 std::string PromptAssembler::build_meals_context() const {
+    // Sort meals by id (numeric prefix controls order)
+    std::vector<const DataItem*> meals;
+    for (const auto& item : meals_.items()) meals.push_back(&item);
+    std::sort(meals.begin(), meals.end(),
+              [](const DataItem* a, const DataItem* b) { return a->id < b->id; });
+
+    if (meals.empty()) return "";
+
+    // Today's meal: day_of_year % num_meals
+    time_t now = time(nullptr);
+    struct tm tm_buf;
+    localtime_r(&now, &tm_buf);
+    int idx = tm_buf.tm_yday % static_cast<int>(meals.size());
+
     std::ostringstream ss;
-    int dom = today_day_of_month();
+    ss << "### Today's Meal\n";
+    ss << "- " << meals[idx]->title;
+    auto type_it = meals[idx]->meta.find("type");
+    if (type_it != meals[idx]->meta.end()) ss << " (" << type_it->second << ")";
+    ss << " [id: " << meals[idx]->id << "] (#" << (idx + 1) << " of " << meals.size() << ")\n";
 
-    auto today_meals = meals_.filter([dom](const DataItem& item) {
-        auto it = item.meta.find("days");
-        if (it == item.meta.end()) return false;
-        std::string days_str = it->second;
-        std::istringstream iss(days_str);
-        std::string token;
-        while (std::getline(iss, token, ',')) {
-            while (!token.empty() && token.front() == ' ') token.erase(token.begin());
-            while (!token.empty() && token.back() == ' ') token.pop_back();
-            try {
-                if (std::stoi(token) == dom) return true;
-            } catch (...) {}
-        }
-        return false;
-    });
-
-    if (!today_meals.empty()) {
-        ss << "### Today's Meals\n";
-        for (const auto* item : today_meals) {
-            ss << "- " << item->title;
-            auto type_it = item->meta.find("type");
-            auto slot_it = item->meta.find("slot");
-            if (type_it != item->meta.end()) ss << " (" << type_it->second << ")";
-            if (slot_it != item->meta.end()) ss << " [slot " << slot_it->second << "]";
-            ss << " [id: " << item->id << "]\n";
-        }
-    }
-
-    if (meals_.items().size() > today_meals.size()) {
-        ss << "### All Meals\n";
-        for (const auto& item : meals_.items()) {
-            ss << "- " << item.title;
-            auto type_it = item.meta.find("type");
-            if (type_it != item.meta.end()) ss << " (" << type_it->second << ")";
-            ss << " [id: " << item.id << "]\n";
-        }
+    ss << "### Full Rotation\n";
+    for (size_t i = 0; i < meals.size(); i++) {
+        ss << (i + 1) << ". " << meals[i]->title;
+        auto t_it = meals[i]->meta.find("type");
+        if (t_it != meals[i]->meta.end()) ss << " (" << t_it->second << ")";
+        ss << " [id: " << meals[i]->id << "]\n";
     }
 
     return ss.str();

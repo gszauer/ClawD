@@ -55,9 +55,8 @@ class AddMealHandler : public ToolHandler {
 public:
     std::string_view name() const override { return "add_meal"; }
     std::string description() const override {
-        return "add_meal(name: string, type: string, content: string, days: string)\n"
-               "  Add a new meal. type is home or delivery.\n"
-               "  days is comma-separated day-of-month numbers. content is the recipe or description.";
+        return "add_meal(name: string, type: string, content: string)\n"
+               "  Add a new meal to the rotation. type is home or delivery. content is the recipe or description.";
     }
     std::string execute(const std::vector<std::string>& params) override;
 };
@@ -66,7 +65,7 @@ class EditMealHandler : public ToolHandler {
 public:
     std::string_view name() const override { return "edit_meal"; }
     std::string description() const override {
-        return "edit_meal(id: string, name: string, type: string, content: string, days: string)\n"
+        return "edit_meal(id: string, name: string, type: string, content: string)\n"
                "  Edit a meal. Pass empty string for fields you don't want to change.";
     }
     std::string execute(const std::vector<std::string>& params) override;
@@ -87,7 +86,7 @@ public:
     std::string_view name() const override { return "get_meals"; }
     std::string description() const override {
         return "get_meals(date: string)\n"
-               "  Get meal options for a date. Returns meal names and types.";
+               "  Get today's meal from the rotation and the full meal list.";
     }
     std::string execute(const std::vector<std::string>& params) override;
 };
@@ -106,8 +105,8 @@ class SwapMealHandler : public ToolHandler {
 public:
     std::string_view name() const override { return "swap_meal"; }
     std::string description() const override {
-        return "swap_meal(date: string, slot: int)\n"
-               "  Switch to an alternate meal option for a date.";
+        return "swap_meal(date: string)\n"
+               "  Skip today's meal in the rotation and use the next one instead.";
     }
     std::string execute(const std::vector<std::string>& params) override;
 };
