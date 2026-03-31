@@ -46,7 +46,7 @@ final class CoreBridge: @unchecked Sendable {
                 print("[clawd] Response callback: empty channel or text")
                 return
             }
-            print("[clawd] Sending to Discord channel \(channel): \(text.prefix(80))...")
+            print("[clawd] Sending response to Discord (\(text.count) chars)")
             DiscordService.shared.sendChannelMessage(text, to: channel)
         }
 

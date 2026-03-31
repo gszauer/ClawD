@@ -7,9 +7,12 @@ struct GeneralTab: View {
     @Bindable private var discord = DiscordService.shared
     @State private var statusMessage = ""
     @State private var isDownloadingModel = false
+    @State private var isDownloadingWhisper = false
+    @State private var whisperDownloadLabel = ""
 
-    private let backends = ["claude", "gemini", "codex", "local"]
-    private let embeddingModes = ["remote", "local"]
+    private let backends = ["claude", "gemini", "codex", "API"]
+    private let embeddingModes = ["API", "local", "off"]
+    private let audioBackends = ["whisper", "off"]
 
     private var calendarJsonExists: Bool {
         FileManager.default.fileExists(atPath: "\(state.workingDirectory)/calendar.json")
@@ -88,9 +91,18 @@ struct GeneralTab: View {
                         }
                         .pickerStyle(.segmented)
                         .frame(maxWidth: 150)
+
+                        Spacer()
+
+                        Text("Audio")
+                        Picker("", selection: $state.audioBackend) {
+                            ForEach(audioBackends, id: \.self) { Text($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 150)
                     }
 
-                    if state.backend == "local" {
+                    if state.backend == "API" {
                         LabeledContent("API URL") {
                             TextField("http://localhost:1234/v1/chat/completions",
                                       text: $state.backendApiUrl)
@@ -114,7 +126,7 @@ struct GeneralTab: View {
                         }
                     }
 
-                    if state.embeddingMode == "remote" {
+                    if state.embeddingMode == "API" {
                         LabeledContent("Embedding URL") {
                             TextField("http://localhost:1234/v1/embeddings",
                                       text: $state.embeddingUrl)
@@ -125,13 +137,13 @@ struct GeneralTab: View {
                                       text: $state.embeddingModel)
                             .textFieldStyle(.roundedBorder)
                         }
-                    } else {
-                        LabeledContent("Model (GGUF)") {
+                    } else if state.embeddingMode == "local" {
+                        LabeledContent("Embedding Model") {
                             HStack {
                                 TextField("Path to .gguf file", text: $state.embeddingModelPath)
                                     .textFieldStyle(.roundedBorder)
                                 Button("Browse...") { browseGgufModel() }
-                                Button("Download") { downloadDefaultModel() }
+                                Button("Download") { downloadEmbeddingModel() }
                                     .disabled(isDownloadingModel)
                             }
                         }
@@ -140,6 +152,29 @@ struct GeneralTab: View {
                                 ProgressView()
                                     .controlSize(.small)
                                 Text("Downloading nomic-embed-text-v1.5.f16.gguf (262 MB)...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    if state.audioBackend == "whisper" {
+                        LabeledContent("Whisper Model") {
+                            HStack {
+                                TextField("Path to whisper model", text: $state.whisperModelPath)
+                                    .textFieldStyle(.roundedBorder)
+                                Button("Browse...") { browseWhisperModel() }
+                                Button("Base") { downloadWhisperModel(size: "base") }
+                                    .disabled(isDownloadingWhisper)
+                                Button("Small") { downloadWhisperModel(size: "small") }
+                                    .disabled(isDownloadingWhisper)
+                            }
+                        }
+                        if isDownloadingWhisper {
+                            HStack {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(whisperDownloadLabel)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -205,9 +240,6 @@ struct GeneralTab: View {
                                 Spacer()
                             }
                         }
-                        Text("Share your Google Calendar with this email to grant access.")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
                     }
 
                     HStack {
@@ -314,8 +346,10 @@ struct GeneralTab: View {
             print("[clawd] Config path: \(state.configPath)")
             state.refreshData()
 
-            // Check embedding endpoint
-            checkEmbeddingHealth()
+            // Check embedding endpoint (only for remote mode)
+            if state.embeddingMode == "API" {
+                checkEmbeddingHealth()
+            }
 
             // Connect Discord if token is set
             if !state.discordBotToken.isEmpty {
@@ -399,7 +433,7 @@ struct GeneralTab: View {
         }
     }
 
-    private func downloadDefaultModel() {
+    private func downloadEmbeddingModel() {
         guard let url = URL(string: "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf") else { return }
         let destPath = "\(state.workingDirectory)/nomic-embed-text-v1.5.f16.gguf"
 
@@ -425,6 +459,55 @@ struct GeneralTab: View {
                     try FileManager.default.moveItem(at: tempUrl, to: dest)
                     state.embeddingModelPath = destPath
                     AppState.shared.showToast("Model downloaded to working directory")
+                } catch {
+                    AppState.shared.showToast("Failed to save model: \(error.localizedDescription)", isError: true)
+                }
+            }
+        }
+        task.resume()
+    }
+
+    private func browseWhisperModel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.data]
+        panel.message = "Select a Whisper model file"
+        if panel.runModal() == .OK, let url = panel.url {
+            state.whisperModelPath = url.path
+        }
+    }
+
+    private func downloadWhisperModel(size: String) {
+        let remoteFile = "ggml-\(size).en.bin"
+        let localFile = "whisper-ggml-\(size).en.bin"
+        guard let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(remoteFile)") else { return }
+        let destPath = "\(state.workingDirectory)/\(localFile)"
+
+        if FileManager.default.fileExists(atPath: destPath) {
+            state.whisperModelPath = destPath
+            AppState.shared.showToast("Model already exists — path set")
+            return
+        }
+
+        let sizeLabel = size == "base" ? "142 MB" : "466 MB"
+        whisperDownloadLabel = "Downloading \(localFile) (\(sizeLabel))..."
+        isDownloadingWhisper = true
+        let task = URLSession.shared.downloadTask(with: url) { tempUrl, response, error in
+            DispatchQueue.main.async {
+                isDownloadingWhisper = false
+                if let error {
+                    AppState.shared.showToast("Download failed: \(error.localizedDescription)", isError: true)
+                    return
+                }
+                guard let tempUrl else { return }
+                let dest = URL(fileURLWithPath: destPath)
+                do {
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.moveItem(at: tempUrl, to: dest)
+                    state.whisperModelPath = destPath
+                    AppState.shared.showToast("Whisper \(size) model downloaded")
                 } catch {
                     AppState.shared.showToast("Failed to save model: \(error.localizedDescription)", isError: true)
                 }

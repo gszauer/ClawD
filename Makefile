@@ -25,6 +25,7 @@ CXX_SRCS := config.cpp \
             task_queue.cpp \
             calendar.cpp \
             local_embed.cpp \
+            whisper_transcribe.cpp \
             core.cpp \
             main.cpp
 
@@ -37,6 +38,7 @@ OBJS     := $(CXX_OBJS) $(C_OBJS)
 
 # llama.cpp static libraries (pre-built in deps/lib/)
 LLAMA_LIBS := deps/lib/libllama.a \
+              deps/lib/libwhisper.a \
               deps/lib/libggml.a \
               deps/lib/libggml-base.a \
               deps/lib/libggml-cpu.a \

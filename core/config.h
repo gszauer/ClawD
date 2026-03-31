@@ -15,10 +15,12 @@ struct Config {
     std::string backend_api_url;
     std::string backend_api_key;
     std::string backend_api_model;
-    std::string embedding_mode = "remote";  // "remote" or "local"
+    std::string embedding_mode = "API";     // "API", "local", or "off"
     std::string embedding_url = "http://localhost:1234/v1/embeddings";
     std::string embedding_model = "text-embedding-embeddinggemma-300m";
     std::string embedding_model_path;       // path to GGUF file for local mode
+    std::string audio_backend = "off";      // "whisper" or "off"
+    std::string whisper_model_path;
     std::string assistant_name = "ClawD";
     std::string assistant_emoji = "\xF0\x9F\xA6\x80"; // crab
     std::string thinking_emoji;

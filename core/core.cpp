@@ -12,6 +12,7 @@
 #include "calendar.h"
 #include "http_client.h"
 #include "local_embed.h"
+#include "whisper_transcribe.h"
 #include "cJSON.h"
 
 #include <memory>
@@ -387,9 +388,14 @@ void core_initialize(const char* config_path, PlatformCallbacks callbacks,
     // Chat history
     g_chat = std::make_unique<ChatHistory>(wd + "/chat");
 
-    // Local embeddings (bert.cpp)
+    // Local embeddings
     if (g_config.embedding_mode == "local" && !g_config.embedding_model_path.empty()) {
         local_embed_init(g_config.embedding_model_path);
+    }
+
+    // Whisper transcription
+    if (g_config.audio_backend == "whisper" && !g_config.whisper_model_path.empty()) {
+        whisper_transcribe_init(g_config.whisper_model_path);
     }
 
     // Note search
@@ -437,6 +443,7 @@ void core_initialize(const char* config_path, PlatformCallbacks callbacks,
 }
 
 void core_shutdown() {
+    whisper_transcribe_shutdown();
     local_embed_shutdown();
     if (g_note_search) g_note_search->save();
     g_prompt.reset();
@@ -549,12 +556,11 @@ void core_on_message_received(const char* user, const char* text,
         g_chat->append_assistant(clean_response);
     }
 
-    // Output response (Phase 1: stdout)
-    std::cout << clean_response << std::endl;
-
-    // Send to Discord regardless (errors are useful feedback there)
+    // Send to Discord (errors are useful feedback there)
     if (g_response_callback && !chan_str.empty()) {
         g_response_callback(chan_str.c_str(), clean_response.c_str());
+    } else {
+        std::cout << clean_response << std::endl;
     }
 
     // Add tool-specific emoji reactions (these stay permanently)
@@ -747,6 +753,18 @@ extern "C" const char* core_execute_tool(const char* tool_name, const char* para
     std::string result = handler->execute(params);
 
     // Return a heap-allocated copy the caller frees with core_free_string
+    char* copy = static_cast<char*>(malloc(result.size() + 1));
+    memcpy(copy, result.c_str(), result.size() + 1);
+    return copy;
+}
+
+extern "C" const char* core_transcribe_audio(const char* file_path) {
+    if (!file_path) return nullptr;
+    if (g_config.audio_backend != "whisper" || !whisper_transcribe_is_loaded()) return nullptr;
+
+    std::string result = whisper_transcribe_audio(file_path);
+    if (result.empty()) return nullptr;
+
     char* copy = static_cast<char*>(malloc(result.size() + 1));
     memcpy(copy, result.c_str(), result.size() + 1);
     return copy;

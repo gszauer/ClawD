@@ -57,6 +57,10 @@ void core_reload_data(void);
 // Re-index a note's embedding after it was edited on disk.
 void core_reindex_note(const char* note_id);
 
+// Transcribe an audio file using the configured audio backend (e.g. gemini CLI).
+// Returns the transcript string. Caller must free with core_free_string().
+const char* core_transcribe_audio(const char* file_path);
+
 // Execute a tool directly (bypasses the AI). Returns the tool result string.
 // Caller must free the returned string with core_free_string().
 const char* core_execute_tool(const char* tool_name, const char* params_json);

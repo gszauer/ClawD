@@ -12,17 +12,31 @@ struct clawdApp: App {
         try? FileManager.default.createDirectory(
             atPath: state.workingDirectory, withIntermediateDirectories: true)
 
+        // Clear and recreate tmp directory
+        let tmpDir = state.tmpDirectory
+        try? FileManager.default.removeItem(atPath: tmpDir)
+        try? FileManager.default.createDirectory(
+            atPath: tmpDir, withIntermediateDirectories: true)
+
         // Auto-load config.json if it exists
         if FileManager.default.fileExists(atPath: state.configPath) {
             state.loadConfig()
         }
     }
 
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     var body: some Scene {
-        WindowGroup {
+        Window("ClawD", id: "main") {
             ContentView()
                 .frame(minWidth: 700, minHeight: 500)
         }
         .defaultSize(width: 900, height: 650)
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
     }
 }

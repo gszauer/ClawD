@@ -13,6 +13,11 @@ final class AppState {
         return wd + "/config.json"
     }
 
+    var tmpDirectory: String {
+        let wd = workingDirectory.isEmpty ? AppState.defaultWorkingDirectory : workingDirectory
+        return wd + "/tmp"
+    }
+
     // Editing state — blocks tab switching and other actions
     var isEditing = false
 
@@ -22,11 +27,12 @@ final class AppState {
     private var toastTimer: Timer?
 
     func showToast(_ message: String, isError: Bool = false) {
+        print("[Toast] \(isError ? "ERROR: " : "")\(message)")
         DispatchQueue.main.async {
             self.toastMessage = message
             self.toastIsError = isError
             self.toastTimer?.invalidate()
-            self.toastTimer = Timer.scheduledTimer(withTimeInterval: isError ? 8 : 4, repeats: false) { _ in
+            self.toastTimer = Timer.scheduledTimer(withTimeInterval: isError ? 10 : 7, repeats: false) { _ in
                 self.toastMessage = ""
             }
         }
@@ -47,10 +53,12 @@ final class AppState {
     var backendApiUrl: String = ""
     var backendApiKey: String = ""
     var backendApiModel: String = ""
-    var embeddingMode: String = "remote"
+    var embeddingMode: String = "API"
     var embeddingUrl: String = "http://localhost:1234/v1/embeddings"
     var embeddingModel: String = "text-embedding-embeddinggemma-300m"
     var embeddingModelPath: String = ""
+    var audioBackend: String = "off"
+    var whisperModelPath: String = ""
     var assistantName: String = "ClawD"
     var assistantEmoji: String = "🦀"
     var discordBotToken: String = ""
@@ -93,15 +101,21 @@ final class AppState {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
 
-        backend = json["backend"] as? String ?? "claude"
+        let validBackends = Set(["claude", "gemini", "codex", "API"])
+        let validEmbedding = Set(["API", "local", "off"])
+        let validAudio = Set(["whisper", "off"])
+
+        backend = validBackends.contains(json["backend"] as? String ?? "") ? json["backend"] as! String : "claude"
         backendCliPath = json["backend_cli_path"] as? String ?? ""
         backendApiUrl = json["backend_api_url"] as? String ?? ""
         backendApiKey = json["backend_api_key"] as? String ?? ""
         backendApiModel = json["backend_api_model"] as? String ?? ""
-        embeddingMode = json["embedding_mode"] as? String ?? "remote"
+        embeddingMode = validEmbedding.contains(json["embedding_mode"] as? String ?? "") ? json["embedding_mode"] as! String : "API"
         embeddingUrl = json["embedding_url"] as? String ?? ""
         embeddingModel = json["embedding_model"] as? String ?? ""
         embeddingModelPath = json["embedding_model_path"] as? String ?? ""
+        audioBackend = validAudio.contains(json["audio_backend"] as? String ?? "") ? json["audio_backend"] as! String : "off"
+        whisperModelPath = json["whisper_model_path"] as? String ?? ""
         assistantName = json["assistant_name"] as? String ?? "ClawD"
         assistantEmoji = json["assistant_emoji"] as? String ?? "🦀"
         discordBotToken = json["discord_bot_token"] as? String ?? ""
@@ -149,6 +163,8 @@ final class AppState {
             "embedding_url": embeddingUrl,
             "embedding_model": embeddingModel,
             "embedding_model_path": embeddingModelPath,
+            "audio_backend": audioBackend,
+            "whisper_model_path": whisperModelPath,
             "assistant_name": assistantName,
             "assistant_emoji": assistantEmoji,
             "discord_bot_token": discordBotToken,
@@ -205,11 +221,6 @@ final class AppState {
         df.dateFormat = "yyyy-MM-dd"
         let dateStr = df.string(from: Date())
         let log = CoreBridge.shared.getChatHistory(date: dateStr)
-        print("[clawd] refreshData: date=\(dateStr) chatLog.count=\(log.count)")
-        if !log.isEmpty {
-            let preview = String(log.prefix(200))
-            print("[clawd] chatLog preview: \(preview)")
-        }
         chatLog = log
 
         // Reload calendar cache

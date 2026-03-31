@@ -266,12 +266,93 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
         let messageId = d["id"] as? String ?? ""
         let username = (d["author"] as? [String: Any])?["username"] as? String ?? "User"
 
+        // Check for audio attachments
+        if let attachments = d["attachments"] as? [[String: Any]] {
+            for attachment in attachments {
+                guard let contentType = attachment["content_type"] as? String,
+                      contentType.hasPrefix("audio/"),
+                      let urlStr = attachment["url"] as? String,
+                      let filename = attachment["filename"] as? String
+                else { continue }
+
+                print("[Discord] Audio attachment from \(username): \(filename)")
+                downloadAndTranscribe(url: urlStr, filename: filename,
+                                      messageId: messageId, channelId: msgChannelId,
+                                      username: username)
+            }
+        }
+
         guard !content.isEmpty else { return }
 
-        print("[Discord] Message from \(username): \(content.prefix(100))")
+        print("[Discord] Message from \(username) (\(content.count) chars)")
 
         DispatchQueue.global(qos: .userInitiated).async {
             core_on_message_received(username, content, msgChannelId, messageId)
+            DispatchQueue.main.async {
+                AppState.shared.refreshData()
+            }
+        }
+    }
+
+    private func downloadAndTranscribe(url urlStr: String, filename: String,
+                                       messageId: String, channelId: String,
+                                       username: String) {
+        let audioBackend = AppState.shared.audioBackend
+        guard audioBackend != "off" else {
+            print("[Discord] Audio backend is off, ignoring attachment")
+            return
+        }
+
+        guard let url = URL(string: urlStr) else { return }
+        let tmpDir = AppState.shared.tmpDirectory
+        let destPath = "\(tmpDir)/\(messageId)_\(filename)"
+
+        URLSession.shared.downloadTask(with: url) { [weak self] tempUrl, response, error in
+            if let error {
+                print("[Discord] Attachment download failed: \(error.localizedDescription)")
+                return
+            }
+            guard let tempUrl else { return }
+            let dest = URL(fileURLWithPath: destPath)
+            do {
+                try? FileManager.default.removeItem(at: dest)
+                try FileManager.default.moveItem(at: tempUrl, to: dest)
+                print("[Discord] Saved audio: \(destPath)")
+            } catch {
+                print("[Discord] Failed to save attachment: \(error.localizedDescription)")
+                return
+            }
+
+            // Transcribe
+            self?.transcribeAudio(filePath: destPath, messageId: messageId,
+                                  channelId: channelId, username: username)
+        }.resume()
+    }
+
+    private func transcribeAudio(filePath: String, messageId: String,
+                                  channelId: String, username: String) {
+        // Add ear emoji to acknowledge audio
+        addReaction(channelId: channelId, messageId: messageId, emoji: "\u{1F442}") // 👂
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let cStr = core_transcribe_audio(filePath) else {
+                print("[Discord] Transcription not available or failed")
+                try? FileManager.default.removeItem(atPath: filePath)
+                return
+            }
+            let transcript = String(cString: cStr)
+            core_free_string(cStr)
+
+            print("[Discord] Transcript (\(transcript.count) chars)")
+            try? FileManager.default.removeItem(atPath: filePath)
+
+            // Feed to the AI as a user message (blocks until LLM responds)
+            let userMessage = "[Voice message transcript]: \(transcript)"
+            core_on_message_received(username, userMessage, channelId, messageId)
+
+            // Post transcript to Discord after the AI response
+            self?.sendChannelMessage("Transcribed audio: \(transcript)", to: channelId)
+
             DispatchQueue.main.async {
                 AppState.shared.refreshData()
             }

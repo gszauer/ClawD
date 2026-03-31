@@ -123,7 +123,7 @@ std::string Backend::execute_api(std::string_view api_url,
 }
 
 std::string Backend::execute(const Config& config, std::string_view prompt) {
-    if (config.backend == "local") {
+    if (config.backend == "API") {
         return execute_api(config.backend_api_url, config.backend_api_key,
                            config.backend_api_model, prompt);
     } else if (config.backend == "claude") {
