@@ -56,9 +56,9 @@ void DataStore::load() {
     }
     closedir(d);
 
-    // Sort by title for consistent ordering
+    // Sort by id (filename) for consistent ordering — numeric prefixes control order
     std::sort(items_.begin(), items_.end(),
-              [](const DataItem& a, const DataItem& b) { return a.title < b.title; });
+              [](const DataItem& a, const DataItem& b) { return a.id < b.id; });
 }
 
 const DataItem* DataStore::find(std::string_view id) const {
