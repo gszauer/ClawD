@@ -17,21 +17,11 @@ struct MealsTab: View {
             // List
             VStack {
                 List(state.meals, id: \.mealId, selection: selectionBinding) { meal in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(meal.mealTitle).fontWeight(.medium)
-                            Text(meal["type"] as? String ?? "")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if let slot = meal["slot"] as? String {
-                            Text("Slot \(slot)")
-                                .font(.caption2)
-                                .padding(4)
-                                .background(Color.secondary.opacity(0.15))
-                                .cornerRadius(4)
-                        }
+                    VStack(alignment: .leading) {
+                        Text(meal.mealTitle).fontWeight(.medium)
+                        Text(meal["type"] as? String ?? "")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -44,6 +34,14 @@ struct MealsTab: View {
                     }
                     .disabled(selectedId == nil)
                     Spacer()
+                    Button { guardAction { moveSelected(direction: -1) } } label: {
+                        Image(systemName: "arrow.up").frame(width: 20, height: 20)
+                    }
+                    .disabled(selectedId == nil)
+                    Button { guardAction { moveSelected(direction: 1) } } label: {
+                        Image(systemName: "arrow.down").frame(width: 20, height: 20)
+                    }
+                    .disabled(selectedId == nil)
                 }
                 .padding(8)
             }
@@ -64,17 +62,11 @@ struct MealsTab: View {
                                         .font(.title2)
                                         .fontWeight(.bold)
 
-                                    HStack {
-                                        if let type = meal["type"] as? String {
-                                            Label(type, systemImage: "fork.knife")
-                                                .font(.caption)
-                                        }
-                                        if let days = meal["days"] as? String {
-                                            Label("Days: \(days)", systemImage: "calendar")
-                                                .font(.caption)
-                                        }
+                                    if let type = meal["type"] as? String {
+                                        Label(type, systemImage: "fork.knife")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                     }
-                                    .foregroundStyle(.secondary)
 
                                     Divider()
                                 }
@@ -180,10 +172,82 @@ struct MealsTab: View {
 
     private func addMeal() {
         guard CoreBridge.shared.isRunning else { return }
-        CoreBridge.shared.executeTool("add_meal", params: [newName, newType, newContent, ""])
+        CoreBridge.shared.executeTool("add_meal", params: [newName, newType, newContent])
         newName = ""
         newContent = ""
         showingAdd = false
+        state.refreshData()
+    }
+
+    /// Ensure all meal files have a numeric prefix. Files without one get the next available number.
+    private func ensurePrefixes(in dir: String, files: [String]) -> [String] {
+        let fm = FileManager.default
+        var maxPrefix = 0
+        var needsPrefix: [String] = []
+        var prefixed: [String] = []
+
+        for f in files {
+            if let first = f.split(separator: "_").first, let n = Int(first) {
+                maxPrefix = max(maxPrefix, n)
+                prefixed.append(f)
+            } else {
+                needsPrefix.append(f)
+            }
+        }
+
+        for f in needsPrefix {
+            maxPrefix += 1
+            let newName = String(format: "%02d_%@", maxPrefix, f)
+            try? fm.moveItem(atPath: "\(dir)/\(f)", toPath: "\(dir)/\(newName)")
+            prefixed.append(newName)
+        }
+
+        return prefixed.sorted()
+    }
+
+    private func moveSelected(direction: Int) {
+        guard let id = selectedId else { return }
+        let mealsDir = "\(state.workingDirectory)/meals"
+        let fm = FileManager.default
+
+        guard let rawFiles = try? fm.contentsOfDirectory(atPath: mealsDir)
+            .filter({ $0.hasSuffix(".md") })
+            .sorted()
+        else { return }
+
+        let files = ensurePrefixes(in: mealsDir, files: rawFiles)
+
+        guard let idx = files.firstIndex(where: { $0.contains(id) || $0 == "\(id).md" }) else { return }
+        let targetIdx = idx + direction
+        guard targetIdx >= 0 && targetIdx < files.count else { return }
+
+        let fileA = files[idx]
+        let fileB = files[targetIdx]
+
+        // Extract numeric prefixes
+        guard let prefixA = fileA.split(separator: "_").first, Int(prefixA) != nil,
+              let prefixB = fileB.split(separator: "_").first, Int(prefixB) != nil
+        else { return }
+
+        // Swap prefixes
+        let suffixA = String(fileA.dropFirst(prefixA.count + 1))
+        let suffixB = String(fileB.dropFirst(prefixB.count + 1))
+
+        let newNameA = "\(prefixB)_\(suffixA)"
+        let newNameB = "\(prefixA)_\(suffixB)"
+
+        let tempPath = "\(mealsDir)/_swap_temp_.md"
+        do {
+            try fm.moveItem(atPath: "\(mealsDir)/\(fileA)", toPath: tempPath)
+            try fm.moveItem(atPath: "\(mealsDir)/\(fileB)", toPath: "\(mealsDir)/\(newNameB)")
+            try fm.moveItem(atPath: tempPath, toPath: "\(mealsDir)/\(newNameA)")
+        } catch {
+            try? fm.moveItem(atPath: tempPath, toPath: "\(mealsDir)/\(fileA)")
+            return
+        }
+
+        selectedId = String(newNameA.dropLast(3))
+        core_reload_data()
         state.refreshData()
     }
 
