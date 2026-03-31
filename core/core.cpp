@@ -178,28 +178,49 @@ static void run_proactive(const char* label, std::string_view instruction) {
     std::string prompt = g_prompt->assemble_proactive(instruction, g_tools->get_definitions());
     std::string response = Backend::execute(g_config, prompt);
 
-    bool is_error = response.find("[Error:") == 0;
+    // Parse and execute tool calls (same as message path)
+    auto tool_calls = parse_tool_calls(response);
+    if (!tool_calls.empty()) {
+        std::string tool_results;
+        for (const auto& call : tool_calls) {
+            ToolHandler* handler = g_tools->find(call.name);
+            if (handler) {
+                std::string result = handler->execute(call.params);
+                tool_results += "Tool " + call.name + " result: " + result + "\n";
+            } else {
+                tool_results += "Tool " + call.name + ": unknown tool\n";
+            }
+        }
+
+        std::string followup = prompt +
+            "\n\n## Assistant's Previous Response\n" + response +
+            "\n\n## Tool Results\n" + tool_results +
+            "\n\nIncorporate the tool results into your response to the user. "
+            "Do not use any more tools.";
+        response = Backend::execute(g_config, followup);
+    }
+
+    std::string clean_response = strip_tool_calls(response);
+    bool is_error = clean_response.find("[Error:") == 0;
 
     if (!is_error) {
-        // Only log successful responses to chat history
         g_chat->append_user("System", instruction);
-        g_chat->append_assistant(response);
+        g_chat->append_assistant(clean_response);
     }
 
-    // Send to Discord regardless (errors are useful feedback there)
+    // Send to Discord
     if (g_response_callback && !g_config.discord_channel_id.empty()) {
-        g_response_callback(g_config.discord_channel_id.c_str(), response.c_str());
+        g_response_callback(g_config.discord_channel_id.c_str(), clean_response.c_str());
+    } else if (!is_error) {
+        std::cout << "\n[" << label << "]\n" << clean_response << std::endl;
     }
 
-    // Desktop notification (works without Discord)
+    // Desktop notification
     if (!is_error && g_callbacks.send_notification) {
-        std::string notif_body = response.substr(0, 200);
-        if (response.size() > 200) notif_body += "...";
+        std::string notif_body = clean_response.substr(0, 200);
+        if (clean_response.size() > 200) notif_body += "...";
         g_callbacks.send_notification(label, notif_body.c_str());
     }
-
-    // Also print for Phase 1 CLI usage
-    std::cout << "\n[" << label << "]\n" << response << std::endl;
 }
 
 static void reschedule_notification(const char* name, TaskType type) {

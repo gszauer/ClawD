@@ -74,8 +74,12 @@ final class CoreBridge: @unchecked Sendable {
                     }
                 }
             }
-            core_check_tasks()
-            AppState.shared.refreshData()
+            DispatchQueue.global(qos: .userInitiated).async {
+                core_check_tasks()
+                DispatchQueue.main.async {
+                    AppState.shared.refreshData()
+                }
+            }
         }
         // Run an immediate check for any overdue tasks
         core_check_tasks()
