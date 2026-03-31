@@ -7,6 +7,7 @@ A native macOS personal assistant that connects to Discord, manages your calenda
 ## What It Does
 
 - **Chat** with an AI assistant via Discord or the local app UI
+- **Voice messages** — Discord audio messages are transcribed locally via whisper.cpp and processed as text
 - **Reminders** with one-time and recurring schedules (daily, weekly, monthly)
 - **Meals** tracking with home/delivery categories and day-of-month scheduling
 - **Chores** with color-coded categories, recurrence, and completion tracking
@@ -47,8 +48,9 @@ make
 
 On first launch, the app creates a `working/` directory next to the `.app` bundle with default settings. The General tab lets you configure:
 
-- **Backend** — select Claude / Gemini / Codex / Local and set the CLI path or API URL
-- **Embedding** — URL and model for semantic note search (default: `localhost:1234`)
+- **Backend** — select Claude / Gemini / Codex / API and set the CLI path or API URL
+- **Embedding** — API server or local GGUF model for semantic note search
+- **Audio** — whisper.cpp for voice message transcription (off by default)
 - **Discord** — bot token and channel ID (numeric, right-click channel > Copy ID)
 - **Calendar** — browse for Google service account JSON, enter your calendar ID
 - **Notifications** — enable/disable and set times for daily report, meal prep, etc.
@@ -75,11 +77,21 @@ npm install -g @openai/codex
 ```
 
 **Local API** (e.g. LM Studio):
-- Set backend to "local"
+- Set backend to "API"
 - API URL: `http://localhost:1234/v1/chat/completions`
 - Optional: API key and model name
 
 Use the **Test** button next to the CLI path field to verify the backend is installed.
+
+### 3b. Set Up Audio Transcription (Optional)
+
+Voice messages sent on Discord can be transcribed locally using whisper.cpp.
+
+1. Set the Audio toggle to **whisper**
+2. Click **Base** or **Small** to download a whisper model, or **Browse** to select your own
+3. Click **Save Config**, then **Start**
+
+When a voice message is received, ClawD adds an ear emoji, transcribes the audio, passes the transcript to the AI, and posts both the AI response and the transcript to Discord.
 
 ### 4. Set Up Discord (Optional)
 
@@ -103,13 +115,18 @@ Without Google credentials, the calendar still works locally — events are stor
 
 ### 6. Set Up Embeddings (Optional)
 
-Semantic note search requires an OpenAI-compatible embeddings endpoint.
+Semantic note search uses an embedding model. Two modes are available:
 
+**API** (default) — any OpenAI-compatible endpoint (e.g. LM Studio):
 1. Install [LM Studio](https://lmstudio.ai/) and load an embedding model
-2. Start the LM Studio server (default: `http://localhost:1234`)
-3. The embedding model and URL are configured in the General tab
+2. Start the server (default: `http://localhost:1234`)
 
-Without an embedding server, notes still work — search falls back to title matching. The app shows a toast on startup if the embedding server is unreachable.
+**Local** — runs the model in-process via llama.cpp:
+1. Set Embedding to **local**
+2. Click **Download** to fetch nomic-embed-text-v1.5, or **Browse** for your own GGUF
+3. Reindex notes from the Notes tab
+
+Without embeddings, notes still work — search falls back to title matching.
 
 ## Project Structure
 
@@ -132,12 +149,15 @@ Assistant/
 | Tool System | `tool_parser.h/cpp`, `tool_handler.h/cpp`, `tool_handlers.h/cpp` | 23 tool handlers with `<<TOOL:...>>` parsing |
 | Prompt Assembly | `prompt_assembler.h/cpp` | Builds multi-part prompts from templates + context |
 | Note Search | `note_search.h/cpp` | HNSWLIB semantic search with embedding API |
+| Local Embed | `local_embed.h/cpp` | llama.cpp local embedding inference |
+| Whisper | `whisper_transcribe.h/cpp` | whisper.cpp audio transcription |
 | Calendar | `calendar.h/cpp` | Google Calendar API, sync tokens, local fallback |
 | Backend | `backend.h/cpp` | CLI (`popen`) and API (HTTP POST) execution |
 | Task Queue | `task_queue.h/cpp` | Priority queue for scheduled tasks |
 | HTTP Client | `http_client.h/cpp` | POSIX socket HTTP for Phase 1 |
 | Core API | `core.h/cpp` | C-compatible interface, global state, message routing |
 | Dependencies | `cJSON.c/h`, `hnswlib/` | JSON parsing, nearest neighbor search |
+| Pre-built Libs | `deps/lib/`, `deps/include/` | llama.cpp + whisper.cpp static libraries |
 
 ### Swift Layer
 
@@ -228,6 +248,7 @@ The app is designed to run with missing components:
 | AI backend | Chat shows error messages, tools still work from UI |
 | Discord | Local chat UI works, proactive messages go to chat log + desktop notifications |
 | Embedding server | Note search falls back to title matching, no auto-injection in prompt |
+| Whisper model | Voice messages are downloaded but not transcribed |
 | Google Calendar | Calendar tools use local-only storage, events show orange badge |
 | Config file | Default settings used, config created on first save |
 
@@ -253,7 +274,8 @@ make clean    # Clean
 
 The Xcode project is configured with:
 - `CONFIGURATION_BUILD_DIR = $(SRCROOT)` — .app builds to project root
-- `HEADER_SEARCH_PATHS = $(SRCROOT)/core` — finds C++ headers
+- `HEADER_SEARCH_PATHS = $(SRCROOT)/core, $(SRCROOT)/deps/include` — finds C++ and library headers
+- `LIBRARY_SEARCH_PATHS = $(SRCROOT)/deps/lib` — llama.cpp and whisper.cpp static libraries
 - `SWIFT_OBJC_BRIDGING_HEADER = clawd/clawd-Bridging-Header.h`
 - `GCC_PREPROCESSOR_DEFINITIONS = NO_MANUAL_VECTORIZATION` — HNSWLIB ARM compatibility
 - `ENABLE_APP_SANDBOX = NO` — required for file and network access
@@ -261,9 +283,7 @@ The Xcode project is configured with:
 
 ## TODO
 
-- Audio input: take audio files sent on discord, convert them, store in tmp directory, and direct LLM to check the file.
 - Image input: take image files sent on discord, convert them, store in tmp directory, and let the LLM read the file.
-
 
 ## License
 

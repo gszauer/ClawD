@@ -59,7 +59,7 @@ Semantic note search uses an embedding model to find relevant notes automaticall
 
 ClawD supports two embedding modes, selectable in the **Backend** section:
 
-### Remote (default) — LM Studio or any OpenAI-compatible endpoint
+### API (default) — LM Studio or any OpenAI-compatible endpoint
 
 1. Download [LM Studio](https://lmstudio.ai/)
 2. Search for and download an embedding model (e.g. `embeddinggemma-300m`)
@@ -84,7 +84,27 @@ The llama.cpp static libraries are included in `deps/` — no extra setup requir
 3. Click **Save Config**, then **Start** (or restart)
 4. Go to the **Notes** tab and click the reindex button to re-embed notes with the local model
 
-You can switch between remote and local freely. After switching, reindex your notes so the embeddings are consistent.
+You can switch between API and local freely. After switching, reindex your notes so the embeddings are consistent.
+
+---
+
+## 3b. Audio Transcription (Optional)
+
+Discord voice messages can be transcribed locally using whisper.cpp. The whisper.cpp static library is included in `deps/` — no extra setup required.
+
+1. Set the Audio toggle to **whisper**
+2. Click **Base** (142 MB, faster) or **Small** (466 MB, more accurate) to download a model, or **Browse** to select your own
+3. Click **Save Config**, then **Start** (or restart)
+
+When a voice message arrives on Discord:
+1. The audio file is downloaded to `working/tmp/`
+2. It's converted from OGG to WAV (via macOS `afconvert`)
+3. Whisper transcribes the audio locally
+4. The transcript is passed to the AI as a user message
+5. After the AI responds, the transcript is posted to Discord
+6. An ear emoji is added to the original voice message
+
+Without whisper configured, voice messages are ignored.
 
 ---
 
