@@ -16,6 +16,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
     private var botToken: String = ""
     private var channelId: String = ""
     private var intentionalDisconnect = false
+    private var internalDisconnect = false
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 5
 
@@ -29,6 +30,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
         self.botToken = token
         self.channelId = channelId
         self.intentionalDisconnect = false
+        self.internalDisconnect = false
         self.reconnectAttempts = 0
 
         guard !token.isEmpty else {
@@ -43,6 +45,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
         // Clean up any existing connection first
         cleanupConnection()
 
+        internalDisconnect = false
         print("[Discord] Connecting (attempt \(reconnectAttempts + 1)/\(maxReconnectAttempts + 1))...")
 
         // Get gateway URL
@@ -88,6 +91,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
     }
 
     private func cleanupConnection() {
+        internalDisconnect = true
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
         webSocket?.cancel(with: .goingAway, reason: nil)
@@ -142,6 +146,9 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
         print("[Discord] WebSocket closed (code: \(code))")
         DispatchQueue.main.async { self.isConnected = false }
 
+        // We closed it ourselves (cleanup, op7, op9) — don't double-reconnect
+        if internalDisconnect { return }
+
         // Fatal close codes — don't retry, it's a config problem
         switch code {
         case 4004:
@@ -160,6 +167,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
             break
         }
 
+        // Unexpected close by Discord — try to reconnect
         scheduleReconnect()
     }
 
@@ -233,17 +241,12 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
         case 7: // Reconnect requested by Discord
             print("[Discord] Server requested reconnect")
             cleanupConnection()
-            reconnectAttempts = 0 // server-requested reconnects don't count against limit
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                self?.startConnection()
-            }
+            scheduleReconnect()
 
         case 9: // Invalid Session
-            print("[Discord] Invalid session, re-identifying...")
+            print("[Discord] Invalid session")
             cleanupConnection()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                self?.startConnection()
-            }
+            scheduleReconnect()
 
         case 11: // Heartbeat ACK
             break
