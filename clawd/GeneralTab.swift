@@ -9,6 +9,7 @@ struct GeneralTab: View {
     @State private var isDownloadingModel = false
     @State private var isDownloadingWhisper = false
     @State private var whisperDownloadLabel = ""
+    @State private var showAdvanced = false
 
     private let backends = ["claude", "gemini", "codex", "API"]
     private let embeddingModes = ["API", "local", "off"]
@@ -26,303 +27,369 @@ struct GeneralTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // --- Status & Controls ---
-                GroupBox("Status") {
-                    HStack {
-                        Circle()
-                            .fill(core.isRunning ? .green : .red)
-                            .frame(width: 10, height: 10)
-                        Text(core.isRunning ? "Running" : "Stopped")
+            VStack(spacing: 20) {
 
-                        if discord.isConnected {
-                            Text("  |  Discord: Connected")
-                                .foregroundStyle(.secondary)
-                        }
+                // ── Status Banner ──
+                statusBanner
 
-                        Spacer()
-
-                        Button(core.isRunning ? "Stop" : "Start") {
-                            toggleCore()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(core.isRunning ? .red : .green)
-                    }
-                    .padding(.vertical, 4)
-
-                    if !statusMessage.isEmpty {
-                        Text(statusMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                // ── Working Directory ──
+                card("Working Directory") {
+                    fieldRow("Path", text: $state.workingDirectory, placeholder: "./working",
+                             trailing: { Button("Browse...") { browseDirectory() }.buttonStyle(.bordered).controlSize(.small) })
                 }
 
-                // --- Paths ---
-                GroupBox("Paths") {
-                    LabeledContent("Working Directory") {
-                        HStack {
-                            TextField("./working", text: $state.workingDirectory)
-                                .textFieldStyle(.roundedBorder)
-                            Button("Browse...") { browseDirectory() }
-                        }
-                    }
-                }
-
-                // --- Backend ---
-                GroupBox("Backend") {
-                    HStack {
-                        Text("Backend")
-                        Picker("", selection: $state.backend) {
-                            ForEach(backends, id: \.self) { Text($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 300)
-                        .onChange(of: state.backend) { _, newValue in
-                            if let path = Self.defaultPaths[newValue] {
-                                state.backendCliPath = path
+                // ── AI & Models ──
+                card("AI & Models") {
+                    // Picker row
+                    HStack(spacing: 16) {
+                        pickerGroup("Backend", selection: $state.backend, options: backends, maxWidth: 280)
+                            .onChange(of: state.backend) { _, newValue in
+                                if let path = Self.defaultPaths[newValue] {
+                                    state.backendCliPath = path
+                                }
                             }
-                        }
-
                         Spacer()
-
-                        Text("Embedding")
-                        Picker("", selection: $state.embeddingMode) {
-                            ForEach(embeddingModes, id: \.self) { Text($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 150)
-
+                        pickerGroup("Embedding", selection: $state.embeddingMode, options: embeddingModes, maxWidth: 150)
                         Spacer()
-
-                        Text("Audio")
-                        Picker("", selection: $state.audioBackend) {
-                            ForEach(audioBackends, id: \.self) { Text($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 150)
+                        pickerGroup("Audio", selection: $state.audioBackend, options: audioBackends, maxWidth: 130)
                     }
 
+                    Divider().padding(.vertical, 4)
+
+                    // Backend config
                     if state.backend == "API" {
-                        LabeledContent("API URL") {
-                            TextField("http://localhost:1234/v1/chat/completions",
-                                      text: $state.backendApiUrl)
-                            .textFieldStyle(.roundedBorder)
-                        }
-                        LabeledContent("API Key") {
-                            SecureField("sk-... (optional for local)", text: $state.backendApiKey)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        LabeledContent("Model") {
-                            TextField("model name", text: $state.backendApiModel)
-                                .textFieldStyle(.roundedBorder)
-                        }
+                        fieldRow("API URL", text: $state.backendApiUrl, placeholder: "http://localhost:1234/v1/chat/completions")
+                        fieldRow("API Key", secure: true, text: $state.backendApiKey, placeholder: "sk-...")
+                        fieldRow("Model", text: $state.backendApiModel, placeholder: "model name")
                     } else {
-                        LabeledContent("CLI Path") {
-                            HStack {
-                                TextField("/usr/local/bin/claude", text: $state.backendCliPath)
-                                    .textFieldStyle(.roundedBorder)
-                                Button("Test") { testBackendCli() }
-                            }
+                        HStack {
+                            fieldRow("CLI Path", text: $state.backendCliPath, placeholder: "/usr/local/bin/claude")
+                            Button("Test") { testBackendCli() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
                         }
                     }
 
+                    // Embedding config
                     if state.embeddingMode == "API" {
-                        LabeledContent("Embedding URL") {
-                            TextField("http://localhost:1234/v1/embeddings",
-                                      text: $state.embeddingUrl)
-                            .textFieldStyle(.roundedBorder)
-                        }
-                        LabeledContent("Embedding Model") {
-                            TextField("text-embedding-nomic-embed-text-v1.5",
-                                      text: $state.embeddingModel)
-                            .textFieldStyle(.roundedBorder)
-                        }
+                        fieldRow("Embedding URL", text: $state.embeddingUrl, placeholder: "http://localhost:1234/v1/embeddings")
+                        fieldRow("Embedding Model", text: $state.embeddingModel, placeholder: "text-embedding-nomic-embed-text-v1.5")
                     } else if state.embeddingMode == "local" {
-                        LabeledContent("Embedding Model") {
-                            HStack {
-                                TextField("Path to .gguf file", text: $state.embeddingModelPath)
-                                    .textFieldStyle(.roundedBorder)
-                                Button("Browse...") { browseGgufModel() }
-                                Button("Download") { downloadEmbeddingModel() }
-                                    .disabled(isDownloadingModel)
-                            }
+                        modelRow("Embedding Model", path: $state.embeddingModelPath, placeholder: "Path to .gguf file",
+                                 browse: browseGgufModel) {
+                            Button("Download") { downloadEmbeddingModel() }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(isDownloadingModel)
                         }
-                        if isDownloadingModel {
-                            HStack {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text("Downloading nomic-embed-text-v1.5.f16.gguf (262 MB)...")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                        downloadProgress(isDownloadingModel, "Downloading nomic-embed-text-v1.5.f16.gguf (262 MB)...")
                     }
 
+                    // Whisper config
                     if state.audioBackend == "whisper" {
-                        LabeledContent("Whisper Model") {
-                            HStack {
-                                TextField("Path to whisper model", text: $state.whisperModelPath)
-                                    .textFieldStyle(.roundedBorder)
-                                Button("Browse...") { browseWhisperModel() }
-                                Button("Base") { downloadWhisperModel(size: "base") }
-                                    .disabled(isDownloadingWhisper)
-                                Button("Small") { downloadWhisperModel(size: "small") }
-                                    .disabled(isDownloadingWhisper)
-                            }
+                        modelRow("Whisper Model", path: $state.whisperModelPath, placeholder: "Path to whisper model",
+                                 browse: browseWhisperModel) {
+                            Button("Base") { downloadWhisperModel(size: "base") }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(isDownloadingWhisper)
+                            Button("Small") { downloadWhisperModel(size: "small") }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(isDownloadingWhisper)
                         }
-                        if isDownloadingWhisper {
-                            HStack {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text(whisperDownloadLabel)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                        downloadProgress(isDownloadingWhisper, whisperDownloadLabel)
                     }
                 }
 
-                // --- Discord ---
-                GroupBox("Discord") {
-                    LabeledContent("Bot Token") {
-                        SecureField("Bot token", text: $state.discordBotToken)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    LabeledContent("Channel ID") {
-                        TextField("Numeric ID (right-click channel > Copy ID)", text: $state.discordChannelId)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    LabeledContent("Assistant Name") {
-                        HStack {
-                            TextField("ClawD", text: $state.assistantName)
-                                .textFieldStyle(.roundedBorder)
+                // ── Two-column: Discord + Calendar ──
+                HStack(alignment: .top, spacing: 16) {
+
+                    // Discord
+                    card("Discord") {
+                        HStack(spacing: 6) {
+                            Circle().fill(discord.isConnected ? .green : Color.secondary.opacity(0.3))
+                                .frame(width: 8, height: 8)
+                            Text(discord.isConnected ? "Connected" : "Not connected")
+                                .font(.caption).foregroundStyle(.secondary)
                             Spacer()
-                            Text("Reaction")
-                                .foregroundStyle(.secondary)
-                            TextField("🦀", text: $state.assistantEmoji)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 50)
+                        }
+                        fieldRow("Bot Token", secure: true, text: $state.discordBotToken, placeholder: "Bot token")
+                        fieldRow("Channel ID", text: $state.discordChannelId, placeholder: "Right-click channel > Copy ID")
+                        HStack(spacing: 8) {
+                            fieldRow("Name", text: $state.assistantName, placeholder: "ClawD")
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Emoji").font(.caption).foregroundStyle(.secondary)
+                                TextField("", text: $state.assistantEmoji)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 44)
+                            }
                         }
                     }
-                }
 
-                // --- Calendar ---
-                GroupBox("Calendar") {
-                    LabeledContent("Service Account") {
-                        HStack {
-                            if calendarJsonExists {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                Text("calendar.json loaded")
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Image(systemName: "xmark.circle")
-                                    .foregroundStyle(.secondary)
-                                Text("No calendar.json")
-                                    .foregroundStyle(.secondary)
-                            }
+                    // Calendar
+                    card("Calendar") {
+                        HStack(spacing: 6) {
+                            Image(systemName: calendarJsonExists ? "checkmark.circle.fill" : "xmark.circle")
+                                .foregroundStyle(calendarJsonExists ? .green : .secondary)
+                                .font(.caption)
+                            Text(calendarJsonExists ? "Service account loaded" : "No service account")
+                                .font(.caption).foregroundStyle(.secondary)
                             Spacer()
                             Button("Browse...") { browseServiceAccount() }
+                                .buttonStyle(.bordered).controlSize(.small)
                         }
-                    }
-
-                    LabeledContent("Your Calendar ID") {
-                        TextField("your.email@gmail.com", text: $state.calendarId)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    if !CalendarAuth.shared.serviceAccountEmail.isEmpty {
-                        LabeledContent("Account Email") {
+                        fieldRow("Calendar ID", text: $state.calendarId, placeholder: "your.email@gmail.com")
+                        if !CalendarAuth.shared.serviceAccountEmail.isEmpty {
                             HStack {
+                                Text("Account").font(.caption).foregroundStyle(.secondary)
                                 Text(CalendarAuth.shared.serviceAccountEmail)
-                                    .textSelection(.enabled)
-                                    .foregroundStyle(.secondary)
+                                    .font(.caption).foregroundStyle(.tertiary).textSelection(.enabled)
                                 Spacer()
                             }
                         }
-                    }
-
-                    HStack {
-                        Text("Sync Interval")
-                        Spacer()
-                        Stepper("\(state.calendarSyncInterval) min",
-                                value: $state.calendarSyncInterval, in: 5...120, step: 5)
-                    }
-                }
-
-                // --- Notifications ---
-                GroupBox("Notifications") {
-                    notificationRow("Daily Report", enabled: $state.dailyReportEnabled,
-                                    time: $state.dailyReportTime)
-                    notificationRow("Meal Prep Reminder", enabled: $state.mealPrepEnabled,
-                                    time: $state.mealPrepTime)
-                    notificationRow("Overdue Chores", enabled: $state.overdueChoresEnabled,
-                                    time: $state.overdueChoresTime)
-                    notificationRow("End of Day Summary", enabled: $state.endOfDayEnabled,
-                                    time: $state.endOfDayTime)
-
-                    HStack {
-                        Toggle("Calendar Heads-Up", isOn: $state.calendarHeadsUpEnabled)
-                        Spacer()
-                        Stepper("\(state.calendarHeadsUpMinutes) min before",
-                                value: $state.calendarHeadsUpMinutes, in: 5...120, step: 5)
-                    }
-
-                }
-
-                // --- Advanced ---
-                GroupBox("Advanced") {
-                    VStack(spacing: 8) {
                         HStack {
-                            Text("Chat History")
-                            Spacer()
-                            Stepper("\(state.chatHistoryExchanges) exchanges",
-                                    value: $state.chatHistoryExchanges, in: 5...100, step: 5)
-                        }
-                        HStack {
-                            Text("Heartbeat Interval")
-                            Spacer()
-                            Stepper("\(state.heartbeatIntervalSeconds)s",
-                                    value: $state.heartbeatIntervalSeconds, in: 10...120, step: 5)
-                        }
-                        HStack {
-                            Text("Note Search Results")
-                            Spacer()
-                            Stepper("\(state.noteSearchResults) results",
-                                    value: $state.noteSearchResults, in: 1...20)
-                        }
-                        HStack {
-                            Text("Max Notes in Index")
-                            Spacer()
-                            Stepper("\(state.maxNotesInIndex)",
-                                    value: $state.maxNotesInIndex, in: 1000...100000, step: 1000)
+                            Text("Sync every").font(.caption).foregroundStyle(.secondary)
+                            Stepper("\(state.calendarSyncInterval) min",
+                                    value: $state.calendarSyncInterval, in: 5...120, step: 5)
+                                .font(.caption)
                         }
                     }
                 }
 
-                // --- Save ---
+                // ── Notifications ──
+                card("Notifications") {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        notifCard("Daily Report", icon: "sun.max", enabled: $state.dailyReportEnabled, time: $state.dailyReportTime)
+                        notifCard("Meal Prep", icon: "fork.knife", enabled: $state.mealPrepEnabled, time: $state.mealPrepTime)
+                        notifCard("Overdue Chores", icon: "exclamationmark.circle", enabled: $state.overdueChoresEnabled, time: $state.overdueChoresTime)
+                        notifCard("End of Day", icon: "moon.stars", enabled: $state.endOfDayEnabled, time: $state.endOfDayTime)
+                        notifCardStepper("Calendar", icon: "calendar.badge.clock", enabled: $state.calendarHeadsUpEnabled,
+                                         value: $state.calendarHeadsUpMinutes, range: 5...120, step: 5, unit: "min")
+                    }
+                }
+
+                // ── Advanced (collapsible) ──
+                VStack(spacing: 0) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { showAdvanced.toggle() }
+                    } label: {
+                        HStack {
+                            Image(systemName: "chevron.right")
+                                .rotationEffect(.degrees(showAdvanced ? 90 : 0))
+                                .font(.caption)
+                            Text("Advanced").font(.callout).fontWeight(.medium)
+                            Spacer()
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+
+                    if showAdvanced {
+                        VStack(spacing: 8) {
+                            stepperRow("Chat History", value: $state.chatHistoryExchanges, range: 5...100, step: 5, unit: "exchanges")
+                            stepperRow("Heartbeat", value: $state.heartbeatIntervalSeconds, range: 10...120, step: 5, unit: "seconds")
+                            stepperRow("Note Results", value: $state.noteSearchResults, range: 1...20, step: 1, unit: "results")
+                            stepperRow("Max Notes", value: $state.maxNotesInIndex, range: 1000...100000, step: 1000, unit: "")
+                        }
+                        .padding(16)
+                        .background(Color(.controlBackgroundColor).opacity(0.5))
+                        .cornerRadius(10)
+                        .padding(.horizontal, 1)
+                    }
+                }
+
+                // ── Save ──
                 HStack {
                     Spacer()
-                    Button("Save Config") {
+                    Button {
                         state.saveConfig()
                         statusMessage = "Config saved."
+                    } label: {
+                        Label("Save Config", systemImage: "square.and.arrow.down")
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
             }
-            .padding()
+            .padding(20)
         }
     }
 
-    private func notificationRow(_ label: String, enabled: Binding<Bool>, time: Binding<Date>) -> some View {
+    // MARK: - Status Banner
+
+    private var statusBanner: some View {
+        HStack(spacing: 16) {
+            // Power button
+            Button {
+                toggleCore()
+            } label: {
+                Image(systemName: core.isRunning ? "stop.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(core.isRunning ? .red : .green)
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(core.isRunning ? "Running" : "Stopped")
+                    .font(.title3).fontWeight(.semibold)
+                HStack(spacing: 12) {
+                    statusPill("Core", active: core.isRunning)
+                    statusPill("Discord", active: discord.isConnected)
+                    statusPill(state.backend, active: core.isRunning, color: .blue)
+                    if state.embeddingMode != "off" {
+                        statusPill("Embedding", active: core.isRunning, color: .purple)
+                    }
+                    if state.audioBackend != "off" {
+                        statusPill("Whisper", active: core.isRunning, color: .orange)
+                    }
+                }
+            }
+
+            Spacer()
+
+            if !statusMessage.isEmpty {
+                Text(statusMessage)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(core.isRunning
+                      ? Color.green.opacity(0.08)
+                      : Color(.controlBackgroundColor).opacity(0.5))
+        )
+    }
+
+    // MARK: - Reusable Components
+
+    private func card<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.callout).fontWeight(.semibold).foregroundStyle(.secondary)
+            content()
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.controlBackgroundColor).opacity(0.5)))
+    }
+
+    private func pickerGroup(_ label: String, selection: Binding<String>, options: [String], maxWidth: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Picker("", selection: selection) {
+                ForEach(options, id: \.self) { Text($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: maxWidth)
+        }
+    }
+
+    private func fieldRow(_ label: String, secure: Bool = false, text: Binding<String>, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            if secure {
+                SecureField(placeholder, text: text).textFieldStyle(.roundedBorder)
+            } else {
+                TextField(placeholder, text: text).textFieldStyle(.roundedBorder)
+            }
+        }
+    }
+
+    private func fieldRow<Trailing: View>(_ label: String, text: Binding<String>, placeholder: String,
+                                          @ViewBuilder trailing: () -> Trailing) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                TextField(placeholder, text: text).textFieldStyle(.roundedBorder)
+                trailing()
+            }
+        }
+    }
+
+    private func modelRow<Buttons: View>(_ label: String, path: Binding<String>, placeholder: String,
+                                          browse: @escaping () -> Void, @ViewBuilder buttons: () -> Buttons) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                TextField(placeholder, text: path).textFieldStyle(.roundedBorder)
+                Button("Browse...") { browse() }
+                    .buttonStyle(.bordered).controlSize(.small)
+                buttons()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func downloadProgress(_ active: Bool, _ label: String) -> some View {
+        if active {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(label).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func statusPill(_ label: String, active: Bool, color: Color = .green) -> some View {
+        Text(label)
+            .font(.caption2).fontWeight(.medium)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(
+                Capsule().fill(active ? color.opacity(0.15) : Color.secondary.opacity(0.1))
+            )
+            .foregroundStyle(active ? color : .secondary)
+    }
+
+    private func stepperRow(_ label: String, value: Binding<Int>, range: ClosedRange<Int>, step: Int, unit: String) -> some View {
         HStack {
+            Text(label).font(.callout)
+            Spacer()
+            Stepper("\(value.wrappedValue) \(unit)", value: value, in: range, step: step)
+                .font(.callout)
+        }
+    }
+
+    private func notifCard(_ label: String, icon: String, enabled: Binding<Bool>, time: Binding<Date>) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.callout)
+                .foregroundStyle(enabled.wrappedValue ? .primary : .secondary)
+                .frame(width: 20)
             Toggle(label, isOn: enabled)
+                .font(.callout)
             Spacer()
             DatePicker("", selection: time, displayedComponents: .hourAndMinute)
                 .labelsHidden()
                 .disabled(!enabled.wrappedValue)
+                .scaleEffect(0.85, anchor: .trailing)
         }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(
+            enabled.wrappedValue ? Color.accentColor.opacity(0.06) : Color.clear
+        ))
     }
+
+    private func notifCardStepper(_ label: String, icon: String, enabled: Binding<Bool>,
+                                   value: Binding<Int>, range: ClosedRange<Int>, step: Int, unit: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.callout)
+                .foregroundStyle(enabled.wrappedValue ? .primary : .secondary)
+                .frame(width: 20)
+            Toggle(label, isOn: enabled)
+                .font(.callout)
+            Spacer()
+            Stepper("\(value.wrappedValue) \(unit)", value: value, in: range, step: step)
+                .font(.caption)
+                .disabled(!enabled.wrappedValue)
+                .scaleEffect(0.85, anchor: .trailing)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(
+            enabled.wrappedValue ? Color.accentColor.opacity(0.06) : Color.clear
+        ))
+    }
+
+    // MARK: - Actions
 
     private func toggleCore() {
         if core.isRunning {
@@ -330,13 +397,11 @@ struct GeneralTab: View {
             core.stop()
             statusMessage = "Stopped."
         } else {
-            // Use absolute defaults if fields are empty
             if state.workingDirectory.isEmpty {
                 state.workingDirectory = AppState.defaultWorkingDirectory
             }
             let wd = state.workingDirectory
 
-            // Ensure working directory exists
             try? FileManager.default.createDirectory(
                 atPath: wd, withIntermediateDirectories: true)
 
@@ -346,12 +411,10 @@ struct GeneralTab: View {
             print("[clawd] Config path: \(state.configPath)")
             state.refreshData()
 
-            // Check embedding endpoint (only for remote mode)
             if state.embeddingMode == "API" {
                 checkEmbeddingHealth()
             }
 
-            // Connect Discord if token is set
             if !state.discordBotToken.isEmpty {
                 discord.connect(token: state.discordBotToken, channelId: state.discordChannelId)
             }
@@ -413,7 +476,6 @@ struct GeneralTab: View {
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
             state.workingDirectory = url.path
-            // Auto-load config if it exists in the new directory
             if FileManager.default.fileExists(atPath: state.configPath) {
                 state.loadConfig()
                 AppState.shared.showToast("Config loaded from new directory")
@@ -437,7 +499,6 @@ struct GeneralTab: View {
         guard let url = URL(string: "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf") else { return }
         let destPath = "\(state.workingDirectory)/nomic-embed-text-v1.5.f16.gguf"
 
-        // Skip if already downloaded
         if FileManager.default.fileExists(atPath: destPath) {
             state.embeddingModelPath = destPath
             AppState.shared.showToast("Model already exists — path set")
@@ -523,7 +584,6 @@ struct GeneralTab: View {
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.json]
         if panel.runModal() == .OK, let url = panel.url {
-            // Copy to working/calendar.json
             let dest = "\(state.workingDirectory)/calendar.json"
             try? FileManager.default.removeItem(atPath: dest)
             do {
