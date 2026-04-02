@@ -19,6 +19,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
     private var internalDisconnect = false
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 5
+    private var awaitingHeartbeatAck = false
 
     private let apiBase = "https://discord.com/api/v10"
 
@@ -212,6 +213,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
             if let d = json["d"] as? [String: Any],
                let interval = d["heartbeat_interval"] as? Double {
                 heartbeatInterval = interval / 1000.0
+                awaitingHeartbeatAck = false
                 startHeartbeat()
                 sendIdentify()
             }
@@ -249,7 +251,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
             scheduleReconnect()
 
         case 11: // Heartbeat ACK
-            break
+            awaitingHeartbeatAck = false
 
         default:
             break
@@ -374,6 +376,10 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
                     "os": "macos",
                     "browser": "clawd",
                     "device": "clawd"
+                ],
+                "presence": [
+                    "status": "online",
+                    "afk": false
                 ]
             ]
         ]
@@ -396,6 +402,13 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
     }
 
     private func sendHeartbeat() {
+        if awaitingHeartbeatAck {
+            print("[Discord] No heartbeat ACK received — zombied connection, reconnecting")
+            cleanupConnection()
+            scheduleReconnect()
+            return
+        }
+        awaitingHeartbeatAck = true
         let payload: [String: Any?] = [
             "op": 1,
             "d": lastSequence as Any
