@@ -117,8 +117,8 @@ class AddChoreHandler : public ToolHandler {
 public:
     std::string_view name() const override { return "add_chore"; }
     std::string description() const override {
-        return "add_chore(name: string, color: string, recurrence: string, day: string)\n"
-               "  Add a new chore.";
+        return "add_chore(name: string, color: string, recurrence: string, day: string, details: string)\n"
+               "  Add a new chore. details is optional markdown body (steps, notes, etc).";
     }
     std::string execute(const std::vector<std::string>& params) override;
 };
@@ -143,12 +143,23 @@ public:
     std::string execute(const std::vector<std::string>& params) override;
 };
 
+class GetChoreDetailsHandler : public ToolHandler {
+public:
+    std::string_view name() const override { return "get_chore_details"; }
+    std::string description() const override {
+        return "get_chore_details(id: string)\n"
+               "  Get the full markdown body (steps, notes, etc) for a specific chore.";
+    }
+    std::string execute(const std::vector<std::string>& params) override;
+};
+
 class EditChoreHandler : public ToolHandler {
 public:
     std::string_view name() const override { return "edit_chore"; }
     std::string description() const override {
-        return "edit_chore(id: string, name: string, color: string, recurrence: string, day: string)\n"
-               "  Edit a chore. Pass empty string for fields you don't want to change.";
+        return "edit_chore(id: string, name: string, color: string, recurrence: string, day: string, details: string)\n"
+               "  Edit a chore. Pass empty string for fields you don't want to change.\n"
+               "  details replaces the markdown body (steps, notes, etc) below the heading.";
     }
     std::string execute(const std::vector<std::string>& params) override;
 };

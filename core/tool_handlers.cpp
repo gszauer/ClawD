@@ -363,6 +363,7 @@ std::string AddChoreHandler::execute(const std::vector<std::string>& params) {
     std::string color = params.size() > 1 ? params[1] : "";
     std::string recurrence = params.size() > 2 ? params[2] : "weekly";
     std::string day = params.size() > 3 ? params[3] : "";
+    std::string details = params.size() > 4 ? params[4] : "";
 
     std::map<std::string, std::string> meta;
     if (!color.empty()) meta["color"] = color;
@@ -370,7 +371,7 @@ std::string AddChoreHandler::execute(const std::vector<std::string>& params) {
     if (!day.empty()) meta["day"] = day;
     meta["completed_last"] = "";
 
-    DataItem& item = ctx_->chores->add(name, meta, "");
+    DataItem& item = ctx_->chores->add(name, meta, details);
     return "Added chore: \"" + name + "\" [id: " + item.id + "]";
 }
 
@@ -450,9 +451,40 @@ std::string EditChoreHandler::execute(const std::vector<std::string>& params) {
     if (params.size() > 2 && !params[2].empty()) meta["color"] = params[2];
     if (params.size() > 3 && !params[3].empty()) meta["recurrence"] = params[3];
     if (params.size() > 4 && !params[4].empty()) meta["day"] = params[4];
+    if (params.size() > 5 && !params[5].empty()) {
+        size_t nl = body.find('\n');
+        std::string heading = (nl != std::string::npos) ? body.substr(0, nl) : body;
+        body = heading + "\n\n" + params[5] + "\n";
+    }
 
     ctx_->chores->update(id, meta, body);
     return "Updated chore [id: " + id + "]";
+}
+
+std::string GetChoreDetailsHandler::execute(const std::vector<std::string>& params) {
+    if (params.empty()) return "Error: get_chore_details requires an id";
+
+    const DataItem* item = ctx_->chores->find(params[0]);
+    if (!item) return "Error: chore not found: " + params[0];
+
+    std::ostringstream ss;
+    ss << item->title << "\n";
+    auto rec_it = item->meta.find("recurrence");
+    if (rec_it != item->meta.end()) ss << "Recurrence: " << rec_it->second << "\n";
+    auto day_it = item->meta.find("day");
+    if (day_it != item->meta.end()) ss << "Day: " << day_it->second << "\n";
+    auto color_it = item->meta.find("color");
+    if (color_it != item->meta.end()) ss << "Color: " << color_it->second << "\n";
+    ss << "\n";
+
+    std::string_view body = item->body;
+    size_t nl = body.find('\n');
+    if (nl != std::string_view::npos) {
+        body = body.substr(nl + 1);
+        while (!body.empty() && body.front() == '\n') body.remove_prefix(1);
+    }
+    ss << body;
+    return ss.str();
 }
 
 std::string DeleteChoreHandler::execute(const std::vector<std::string>& params) {
@@ -720,6 +752,7 @@ void register_all_tools(ToolRegistry& registry) {
     registry.register_handler(std::make_unique<EditChoreHandler>());
     registry.register_handler(std::make_unique<CompleteChoreHandler>());
     registry.register_handler(std::make_unique<ListChoresHandler>());
+    registry.register_handler(std::make_unique<GetChoreDetailsHandler>());
     registry.register_handler(std::make_unique<DeleteChoreHandler>());
     registry.register_handler(std::make_unique<SaveNoteHandler>());
     registry.register_handler(std::make_unique<EditNoteHandler>());
