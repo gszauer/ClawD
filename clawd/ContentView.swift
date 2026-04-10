@@ -2,40 +2,50 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable private var state = AppState.shared
-    @State private var selectedTab = 0
+    @State private var selectedTab: Tab = .general
+
+    private enum Tab: Int, Identifiable, CaseIterable {
+        case general, chat, notes, meals, chores, reminders, calendar
+
+        var id: Int { rawValue }
+
+        var title: String {
+            switch self {
+            case .general:   return "General"
+            case .chat:      return "Chat"
+            case .notes:     return "Notes"
+            case .meals:     return "Meals"
+            case .chores:    return "Chores"
+            case .reminders: return "Reminders"
+            case .calendar:  return "Calendar"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .general:   return "gear"
+            case .chat:      return "bubble.left.and.bubble.right"
+            case .notes:     return "note.text"
+            case .meals:     return "fork.knife"
+            case .chores:    return "checklist"
+            case .reminders: return "bell"
+            case .calendar:  return "calendar"
+            }
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            TabView(selection: tabBinding) {
-                GeneralTab()
-                    .tabItem { Label("General", systemImage: "gear") }
-                    .tag(0)
-
-                ChatTab()
-                    .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
-                    .tag(1)
-
-                NotesTab()
-                    .tabItem { Label("Notes", systemImage: "note.text") }
-                    .tag(2)
-
-                MealsTab()
-                    .tabItem { Label("Meals", systemImage: "fork.knife") }
-                    .tag(3)
-
-                ChoresTab()
-                    .tabItem { Label("Chores", systemImage: "checklist") }
-                    .tag(4)
-
-                RemindersTab()
-                    .tabItem { Label("Reminders", systemImage: "bell") }
-                    .tag(5)
-
-                CalendarTab()
-                    .tabItem { Label("Calendar", systemImage: "calendar") }
-                    .tag(6)
+            NavigationSplitView {
+                List(Tab.allCases, selection: tabBinding) { tab in
+                    Label(tab.title, systemImage: tab.icon)
+                        .tag(tab)
+                }
+                .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
+            } detail: {
+                detailView
+                    .padding()
             }
-            .padding()
 
             // Toast overlay
             if !state.toastMessage.isEmpty {
@@ -62,10 +72,24 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.25), value: state.toastMessage.isEmpty)
     }
 
-    private var tabBinding: Binding<Int> {
+    @ViewBuilder
+    private var detailView: some View {
+        switch selectedTab {
+        case .general:   GeneralTab()
+        case .chat:      ChatTab()
+        case .notes:     NotesTab()
+        case .meals:     MealsTab()
+        case .chores:    ChoresTab()
+        case .reminders: RemindersTab()
+        case .calendar:  CalendarTab()
+        }
+    }
+
+    private var tabBinding: Binding<Tab?> {
         Binding(
             get: { selectedTab },
             set: { newTab in
+                guard let newTab else { return }
                 if state.isEditing {
                     state.showToast("Finish editing first")
                 } else {
