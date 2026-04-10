@@ -359,8 +359,8 @@ struct GeneralTab: View {
             Spacer()
             DatePicker("", selection: time, displayedComponents: .hourAndMinute)
                 .labelsHidden()
+                .controlSize(.small)
                 .disabled(!enabled.wrappedValue)
-                .scaleEffect(0.85, anchor: .trailing)
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 8).fill(
