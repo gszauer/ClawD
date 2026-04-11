@@ -325,12 +325,19 @@ static void execute_scheduled_task(const ScheduledTask& task) {
             break;
         }
 
-        case TaskType::DAILY_REPORT:
-            run_proactive("Daily Report",
+        case TaskType::DAILY_REPORT: {
+            std::string instr =
                 "Generate my morning briefing for today. "
-                "Include today's meals, calendar events, due chores, and upcoming reminders.");
+                "Include today's meals, calendar events, due chores, and upcoming reminders.";
+            auto wit = g_config.notifications.find("weather");
+            if (wit != g_config.notifications.end() && wit->second.enabled && !wit->second.zip_code.empty()) {
+                instr += " Also include today's weather — call get_weather with location \""
+                       + wit->second.zip_code + "\" and day \"today\".";
+            }
+            run_proactive("Daily Report", instr);
             reschedule_notification("daily_report", TaskType::DAILY_REPORT);
             break;
+        }
 
         case TaskType::MEAL_PREP_REMINDER:
             run_proactive("Meal Prep",
@@ -345,12 +352,19 @@ static void execute_scheduled_task(const ScheduledTask& task) {
             reschedule_notification("overdue_chores", TaskType::OVERDUE_CHORES);
             break;
 
-        case TaskType::END_OF_DAY_SUMMARY:
-            run_proactive("End of Day",
+        case TaskType::END_OF_DAY_SUMMARY: {
+            std::string instr =
                 "Generate my end-of-day summary. What got done today, "
-                "what didn't, and a preview of tomorrow.");
+                "what didn't, and a preview of tomorrow.";
+            auto wit = g_config.notifications.find("weather");
+            if (wit != g_config.notifications.end() && wit->second.enabled && !wit->second.zip_code.empty()) {
+                instr += " Also include tomorrow's weather forecast — call get_weather with location \""
+                       + wit->second.zip_code + "\" and day \"tomorrow\".";
+            }
+            run_proactive("End of Day", instr);
             reschedule_notification("end_of_day_summary", TaskType::END_OF_DAY_SUMMARY);
             break;
+        }
 
         case TaskType::CALENDAR_SYNC: {
             if (g_calendar) {

@@ -7,6 +7,7 @@ struct NotificationConfig {
     bool enabled = false;
     std::string time;           // "HH:MM" format
     int minutes_before = 0;     // for calendar_heads_up
+    std::string zip_code;       // for weather
 };
 
 struct Config {

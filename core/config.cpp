@@ -39,6 +39,7 @@ static NotificationConfig parse_notification(const cJSON* obj) {
     nc.enabled = json_bool(obj, "enabled", false);
     nc.time = json_string(obj, "time", "");
     nc.minutes_before = json_int(obj, "minutes_before", 0);
+    nc.zip_code = json_string(obj, "zip_code", "");
     return nc;
 }
 

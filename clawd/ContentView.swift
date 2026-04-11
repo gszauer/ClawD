@@ -5,7 +5,7 @@ struct ContentView: View {
     @State private var selectedTab: Tab = .general
 
     private enum Tab: Int, Identifiable, CaseIterable {
-        case general, chat, notes, meals, chores, reminders, calendar
+        case general, chat, notes, meals, chores, reminders, calendar, logs
 
         var id: Int { rawValue }
 
@@ -18,6 +18,7 @@ struct ContentView: View {
             case .chores:    return "Chores"
             case .reminders: return "Reminders"
             case .calendar:  return "Calendar"
+            case .logs:      return "Logs"
             }
         }
 
@@ -30,6 +31,7 @@ struct ContentView: View {
             case .chores:    return "checklist"
             case .reminders: return "bell"
             case .calendar:  return "calendar"
+            case .logs:      return "doc.text.magnifyingglass"
             }
         }
     }
@@ -82,6 +84,7 @@ struct ContentView: View {
         case .chores:    ChoresTab()
         case .reminders: RemindersTab()
         case .calendar:  CalendarTab()
+        case .logs:      LogsTab()
         }
     }
 

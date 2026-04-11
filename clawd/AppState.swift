@@ -26,13 +26,52 @@ final class AppState {
     var toastIsError: Bool = false
     private var toastTimer: Timer?
 
+    // Session log (in-memory only, never persisted)
+    enum LogLevel: String { case info, warning, error }
+    struct LogEntry: Identifiable {
+        let id = UUID()
+        let timestamp: Date
+        let level: LogLevel
+        let message: String
+    }
+    var logs: [LogEntry] = []
+    private let maxLogs = 500
+
+    func appendLog(_ message: String, level: LogLevel) {
+        let entry = LogEntry(timestamp: Date(), level: level, message: message)
+        DispatchQueue.main.async {
+            self.logs.append(entry)
+            if self.logs.count > self.maxLogs {
+                self.logs.removeFirst(self.logs.count - self.maxLogs)
+            }
+        }
+    }
+
+    func clearLogs() {
+        DispatchQueue.main.async { self.logs.removeAll() }
+    }
+
     func showToast(_ message: String, isError: Bool = false) {
         print("[Toast] \(isError ? "ERROR: " : "")\(message)")
+        appendLog(message, level: isError ? .error : .info)
         DispatchQueue.main.async {
             self.toastMessage = message
             self.toastIsError = isError
             self.toastTimer?.invalidate()
             self.toastTimer = Timer.scheduledTimer(withTimeInterval: isError ? 10 : 7, repeats: false) { _ in
+                self.toastMessage = ""
+            }
+        }
+    }
+
+    func showWarning(_ message: String) {
+        print("[Warning] \(message)")
+        appendLog(message, level: .warning)
+        DispatchQueue.main.async {
+            self.toastMessage = message
+            self.toastIsError = false
+            self.toastTimer?.invalidate()
+            self.toastTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: false) { _ in
                 self.toastMessage = ""
             }
         }
@@ -83,6 +122,8 @@ final class AppState {
     var overdueChoresTime: Date = AppState.timeFromHHMM("10:00")
     var endOfDayEnabled: Bool = false
     var endOfDayTime: Date = AppState.timeFromHHMM("21:00")
+    var weatherEnabled: Bool = false
+    var weatherZipCode: String = ""
 
     // Data arrays for UI
     var meals: [[String: Any]] = []
@@ -149,6 +190,10 @@ final class AppState {
                 endOfDayEnabled = ed["enabled"] as? Bool ?? false
                 if let t = ed["time"] as? String { endOfDayTime = AppState.timeFromHHMM(t) }
             }
+            if let w = notifs["weather"] {
+                weatherEnabled = w["enabled"] as? Bool ?? false
+                weatherZipCode = w["zip_code"] as? String ?? ""
+            }
         }
     }
 
@@ -195,6 +240,10 @@ final class AppState {
                 "end_of_day_summary": [
                     "enabled": endOfDayEnabled,
                     "time": Self.hhmmFromDate(endOfDayTime)
+                ],
+                "weather": [
+                    "enabled": weatherEnabled,
+                    "zip_code": weatherZipCode
                 ]
             ]
         ]

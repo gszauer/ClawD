@@ -271,3 +271,17 @@ public:
     }
     std::string execute(const std::vector<std::string>& params) override;
 };
+
+// --- Weather Tools ---
+
+class GetWeatherHandler : public ToolHandler {
+public:
+    std::string_view name() const override { return "get_weather"; }
+    std::string description() const override {
+        return "get_weather(location: string, day: string)\n"
+               "  Get weather conditions and forecast for a US zip code or city name.\n"
+               "  day is optional: today (default), tomorrow, or a 0-2 day offset.\n"
+               "  If location is empty, uses the configured weather zip code.";
+    }
+    std::string execute(const std::vector<std::string>& params) override;
+};

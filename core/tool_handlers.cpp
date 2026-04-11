@@ -735,6 +735,110 @@ std::string DeleteCalendarEventHandler::execute(const std::vector<std::string>& 
     return "Deleted calendar event: " + params[0];
 }
 
+// --- Weather ---
+
+static std::string url_encode(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += c;
+        } else {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%%%02X", static_cast<unsigned char>(c));
+            out += buf;
+        }
+    }
+    return out;
+}
+
+std::string GetWeatherHandler::execute(const std::vector<std::string>& params) {
+    std::string location = !params.empty() ? params[0] : "";
+    std::string day = params.size() > 1 ? params[1] : "today";
+
+    if (location.empty()) {
+        if (ctx_ && ctx_->config) {
+            auto it = ctx_->config->notifications.find("weather");
+            if (it != ctx_->config->notifications.end()) {
+                location = it->second.zip_code;
+            }
+        }
+    }
+    if (location.empty()) {
+        return "Error: get_weather requires a location (zip code or city) and none is configured";
+    }
+
+    int day_idx = 0;
+    if (day == "tomorrow") day_idx = 1;
+    else if (day == "today" || day.empty()) day_idx = 0;
+    else day_idx = std::atoi(day.c_str());
+    if (day_idx < 0) day_idx = 0;
+    if (day_idx > 2) day_idx = 2;
+
+    std::string url = "http://wttr.in/" + url_encode(location) + "?format=j1";
+    HttpResponse resp = http_get(url);
+    if (!resp.ok()) {
+        return "Error: weather service unreachable (status " + std::to_string(resp.status) + ")";
+    }
+
+    cJSON* root = cJSON_Parse(resp.body.c_str());
+    if (!root) return "Error: failed to parse weather response";
+
+    std::ostringstream out;
+
+    if (day_idx == 0) {
+        const cJSON* curr_arr = cJSON_GetObjectItemCaseSensitive(root, "current_condition");
+        const cJSON* curr = curr_arr ? cJSON_GetArrayItem(curr_arr, 0) : nullptr;
+        if (curr) {
+            const cJSON* tF = cJSON_GetObjectItemCaseSensitive(curr, "temp_F");
+            const cJSON* feels = cJSON_GetObjectItemCaseSensitive(curr, "FeelsLikeF");
+            const cJSON* humidity = cJSON_GetObjectItemCaseSensitive(curr, "humidity");
+            const cJSON* wind = cJSON_GetObjectItemCaseSensitive(curr, "windspeedMiles");
+            const cJSON* desc_arr = cJSON_GetObjectItemCaseSensitive(curr, "weatherDesc");
+            const cJSON* desc = desc_arr ? cJSON_GetArrayItem(desc_arr, 0) : nullptr;
+            const cJSON* desc_val = desc ? cJSON_GetObjectItemCaseSensitive(desc, "value") : nullptr;
+
+            out << "Current weather for " << location << ": ";
+            if (cJSON_IsString(desc_val)) out << desc_val->valuestring << ", ";
+            if (cJSON_IsString(tF)) out << tF->valuestring << "°F";
+            if (cJSON_IsString(feels)) out << " (feels " << feels->valuestring << "°F)";
+            if (cJSON_IsString(humidity)) out << ", humidity " << humidity->valuestring << "%";
+            if (cJSON_IsString(wind)) out << ", wind " << wind->valuestring << "mph";
+            out << "\n";
+        }
+    }
+
+    const cJSON* weather_arr = cJSON_GetObjectItemCaseSensitive(root, "weather");
+    const cJSON* day_obj = weather_arr ? cJSON_GetArrayItem(weather_arr, day_idx) : nullptr;
+    if (day_obj) {
+        const cJSON* date = cJSON_GetObjectItemCaseSensitive(day_obj, "date");
+        const cJSON* maxF = cJSON_GetObjectItemCaseSensitive(day_obj, "maxtempF");
+        const cJSON* minF = cJSON_GetObjectItemCaseSensitive(day_obj, "mintempF");
+        const cJSON* hourly_arr = cJSON_GetObjectItemCaseSensitive(day_obj, "hourly");
+        const cJSON* noon = hourly_arr ? cJSON_GetArrayItem(hourly_arr, 4) : nullptr; // ~midday
+        const cJSON* noon_desc_arr = noon ? cJSON_GetObjectItemCaseSensitive(noon, "weatherDesc") : nullptr;
+        const cJSON* noon_desc = noon_desc_arr ? cJSON_GetArrayItem(noon_desc_arr, 0) : nullptr;
+        const cJSON* noon_desc_val = noon_desc ? cJSON_GetObjectItemCaseSensitive(noon_desc, "value") : nullptr;
+        const cJSON* chance_rain = noon ? cJSON_GetObjectItemCaseSensitive(noon, "chanceofrain") : nullptr;
+
+        const char* label = (day_idx == 0) ? "Today" : (day_idx == 1) ? "Tomorrow" : "Forecast";
+        out << label;
+        if (cJSON_IsString(date)) out << " (" << date->valuestring << ")";
+        out << ": ";
+        if (cJSON_IsString(noon_desc_val)) out << noon_desc_val->valuestring << ", ";
+        if (cJSON_IsString(minF) && cJSON_IsString(maxF)) {
+            out << "low " << minF->valuestring << "°F / high " << maxF->valuestring << "°F";
+        }
+        if (cJSON_IsString(chance_rain)) out << ", " << chance_rain->valuestring << "% chance of rain";
+        out << "\n";
+    }
+
+    cJSON_Delete(root);
+
+    std::string result = out.str();
+    if (result.empty()) return "Error: weather data unavailable for " + location;
+    return result;
+}
+
 // --- Registration ---
 
 void register_all_tools(ToolRegistry& registry) {
@@ -763,4 +867,5 @@ void register_all_tools(ToolRegistry& registry) {
     registry.register_handler(std::make_unique<CreateCalendarEventHandler>());
     registry.register_handler(std::make_unique<EditCalendarEventHandler>());
     registry.register_handler(std::make_unique<DeleteCalendarEventHandler>());
+    registry.register_handler(std::make_unique<GetWeatherHandler>());
 }

@@ -163,6 +163,7 @@ struct GeneralTab: View {
                         notifCard("End of Day", icon: "moon.stars", enabled: $state.endOfDayEnabled, time: $state.endOfDayTime)
                         notifCardStepper("Calendar", icon: "calendar.badge.clock", enabled: $state.calendarHeadsUpEnabled,
                                          value: $state.calendarHeadsUpMinutes, range: 5...120, step: 5, unit: "min")
+                        notifCardZip("Weather", icon: "cloud.sun", enabled: $state.weatherEnabled, zip: $state.weatherZipCode)
                     }
                 }
 
@@ -361,6 +362,28 @@ struct GeneralTab: View {
                 .labelsHidden()
                 .controlSize(.small)
                 .disabled(!enabled.wrappedValue)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(
+            enabled.wrappedValue ? Color.accentColor.opacity(0.06) : Color.clear
+        ))
+    }
+
+    private func notifCardZip(_ label: String, icon: String, enabled: Binding<Bool>, zip: Binding<String>) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.callout)
+                .foregroundStyle(enabled.wrappedValue ? .primary : .secondary)
+                .frame(width: 20)
+            Toggle(label, isOn: enabled)
+                .font(.callout)
+            Spacer()
+            if enabled.wrappedValue {
+                TextField("ZIP", text: zip)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .frame(width: 70)
+            }
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 8).fill(
