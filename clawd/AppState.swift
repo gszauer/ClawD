@@ -142,7 +142,7 @@ final class AppState {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
 
-        let validBackends = Set(["claude", "gemini", "codex", "API"])
+        let validBackends = Set(["claude", "API"])
         let validEmbedding = Set(["API", "local", "off"])
         let validAudio = Set(["whisper", "off"])
 

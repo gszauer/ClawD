@@ -326,42 +326,37 @@ static void execute_scheduled_task(const ScheduledTask& task) {
         }
 
         case TaskType::DAILY_REPORT: {
-            std::string instr =
-                "Generate my morning briefing for today. "
-                "Include today's meals, calendar events, due chores, and upcoming reminders.";
+            std::string zip;
             auto wit = g_config.notifications.find("weather");
-            if (wit != g_config.notifications.end() && wit->second.enabled && !wit->second.zip_code.empty()) {
-                instr += " Also include today's weather — call get_weather with location \""
-                       + wit->second.zip_code + "\" and day \"today\".";
+            if (wit != g_config.notifications.end() && wit->second.enabled) {
+                zip = wit->second.zip_code;
             }
-            run_proactive("Daily Report", instr);
+            run_proactive("Daily Report",
+                          g_prompt->load_instruction("daily_report", zip, "today"));
             reschedule_notification("daily_report", TaskType::DAILY_REPORT);
             break;
         }
 
         case TaskType::MEAL_PREP_REMINDER:
             run_proactive("Meal Prep",
-                "What's for dinner tonight? Give a brief meal prep reminder "
-                "including any prep that should be started now.");
+                          g_prompt->load_instruction("meal_prep", "", ""));
             reschedule_notification("meal_prep_reminder", TaskType::MEAL_PREP_REMINDER);
             break;
 
         case TaskType::OVERDUE_CHORES:
             run_proactive("Overdue Chores",
-                "List any overdue chores that need attention today.");
+                          g_prompt->load_instruction("overdue_chores", "", ""));
             reschedule_notification("overdue_chores", TaskType::OVERDUE_CHORES);
             break;
 
         case TaskType::END_OF_DAY_SUMMARY: {
-            std::string instr =
-                "Generate my end-of-day summary. What got done today, "
-                "what didn't, and a preview of tomorrow.";
+            std::string zip;
             auto wit = g_config.notifications.find("weather");
-            if (wit != g_config.notifications.end() && wit->second.enabled && !wit->second.zip_code.empty()) {
-                instr += " Also include tomorrow's weather forecast — call get_weather with location \""
-                       + wit->second.zip_code + "\" and day \"tomorrow\".";
+            if (wit != g_config.notifications.end() && wit->second.enabled) {
+                zip = wit->second.zip_code;
             }
-            run_proactive("End of Day", instr);
+            run_proactive("End of Day",
+                          g_prompt->load_instruction("end_of_day", zip, "tomorrow"));
             reschedule_notification("end_of_day_summary", TaskType::END_OF_DAY_SUMMARY);
             break;
         }
@@ -706,7 +701,7 @@ const char* core_get_chat_history(const char* date) {
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
     g_query_buffer.resize(static_cast<size_t>(len));
-    fread(g_query_buffer.data(), 1, static_cast<size_t>(len), f);
+    if (len > 0) fread(&g_query_buffer[0], 1, static_cast<size_t>(len), f);
     fclose(f);
     return g_query_buffer.c_str();
 }

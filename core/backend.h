@@ -7,7 +7,7 @@ struct Config;
 
 class Backend {
 public:
-    // Execute prompt via CLI backend (claude, gemini, codex) using popen()
+    // Execute prompt via CLI backend (e.g. claude) using popen()
     static std::string execute_cli(std::string_view cli_path, std::string_view prompt);
 
     // Execute prompt via OpenAI-compatible API using HTTP POST

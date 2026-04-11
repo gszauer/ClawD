@@ -5,13 +5,14 @@ struct ContentView: View {
     @State private var selectedTab: Tab = .general
 
     private enum Tab: Int, Identifiable, CaseIterable {
-        case general, chat, notes, meals, chores, reminders, calendar, logs
+        case general, prompts, chat, notes, meals, chores, reminders, calendar, logs
 
         var id: Int { rawValue }
 
         var title: String {
             switch self {
             case .general:   return "General"
+            case .prompts:   return "Prompts"
             case .chat:      return "Chat"
             case .notes:     return "Notes"
             case .meals:     return "Meals"
@@ -25,6 +26,7 @@ struct ContentView: View {
         var icon: String {
             switch self {
             case .general:   return "gear"
+            case .prompts:   return "text.quote"
             case .chat:      return "bubble.left.and.bubble.right"
             case .notes:     return "note.text"
             case .meals:     return "fork.knife"
@@ -78,6 +80,7 @@ struct ContentView: View {
     private var detailView: some View {
         switch selectedTab {
         case .general:   GeneralTab()
+        case .prompts:   PromptsTab()
         case .chat:      ChatTab()
         case .notes:     NotesTab()
         case .meals:     MealsTab()

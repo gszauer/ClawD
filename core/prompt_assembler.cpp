@@ -59,7 +59,7 @@ static std::string read_file(const std::string& path) {
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
     std::string buf(static_cast<size_t>(len), '\0');
-    fread(buf.data(), 1, static_cast<size_t>(len), f);
+    if (len > 0) fread(&buf[0], 1, static_cast<size_t>(len), f);
     fclose(f);
     return buf;
 }
@@ -109,44 +109,65 @@ respond with the exact format:
 Available tools:
 {{tools}})";
 
-static const char* DEFAULT_PROFILE = "";
+static const char* DEFAULT_DAILY_REPORT =
+R"(Generate my morning briefing for today. Include today's meals, calendar events, due chores, and upcoming reminders.{{weather_hint}})";
+
+static const char* DEFAULT_END_OF_DAY =
+R"(Generate my end-of-day summary. What got done today, what didn't, and a preview of tomorrow.{{weather_hint}})";
+
+static const char* DEFAULT_MEAL_PREP =
+R"(What's for dinner tonight? Give a brief meal prep reminder including any prep that should be started now.)";
+
+static const char* DEFAULT_OVERDUE_CHORES =
+R"(List any overdue chores that need attention today.)";
 
 static const char* NOTES_CONTENT =
 R"(# Prompt Template Substitutions
 
-The following {{variables}} are replaced at runtime in system_prompt.md and profile.md:
+The following {{variables}} are replaced at runtime in the prompt files below:
 
   {{assistant_name}}  - The assistant's name from config (e.g. "Friday")
   {{datetime}}        - Current date and time (e.g. "2026-03-29 17:30:00")
   {{date}}            - Current date (e.g. "2026-03-29")
   {{day_of_week}}     - Current day name (e.g. "Sunday")
   {{tools}}           - The full list of available tool definitions
+  {{weather_hint}}    - Expands to a "use the get_weather tool" instruction
+                        when weather is enabled in settings, otherwise empty.
+                        Only meaningful in daily_report.md and end_of_day.md.
 
 ## Files
 
-  system_prompt.md  - The system prompt sent at the start of every AI call.
-                      This defines the assistant's personality and tool instructions.
+  system_prompt.md    - Sent at the start of every AI call.
+                        Defines the assistant's personality and tool instructions.
+                        Put any user profile / preferences / persistent context
+                        (dietary restrictions, wake time, chore meanings, etc.)
+                        here as well.
 
-  profile.md        - User profile / preferences injected after the system prompt.
-                      Use this for dietary restrictions, wake time, chore color
-                      meanings, or any personal context the assistant should know.
+  daily_report.md     - Instruction the assistant gives itself for the morning briefing.
+  meal_prep.md        - Instruction for the meal-prep reminder.
+  overdue_chores.md   - Instruction for the overdue-chores nag.
+  end_of_day.md       - Instruction for the end-of-day summary.
 
-  notes.txt         - This file. Reference only, not sent to the AI.
+  notes.txt           - This file. Reference only, not sent to the AI.
 
 ## Editing
 
-Edit these files with any text editor. Changes take effect on the next app start
-(or when the config is reloaded). The defaults are regenerated if you delete a file.
+Edit these files with any text editor (or via the Prompts tab in the app).
+Changes take effect on the next AI call — the files are re-read each time.
+Delete a file to regenerate its default on next launch.
 )";
 
-// --- Write defaults on startup ---
+// --- Write defaults on startup (or whenever called) ---
 
 void PromptAssembler::write_defaults() const {
     std::string prompts_dir = config_.working_directory + "/prompts";
     mkdir(prompts_dir.c_str(), 0755);
 
     write_file_if_missing(prompts_dir + "/system_prompt.md", DEFAULT_SYSTEM_PROMPT);
-    write_file_if_missing(prompts_dir + "/profile.md", DEFAULT_PROFILE);
+    write_file_if_missing(prompts_dir + "/daily_report.md", DEFAULT_DAILY_REPORT);
+    write_file_if_missing(prompts_dir + "/end_of_day.md", DEFAULT_END_OF_DAY);
+    write_file_if_missing(prompts_dir + "/meal_prep.md", DEFAULT_MEAL_PREP);
+    write_file_if_missing(prompts_dir + "/overdue_chores.md", DEFAULT_OVERDUE_CHORES);
     write_file_if_missing(prompts_dir + "/notes.txt", NOTES_CONTENT);
 }
 
@@ -178,6 +199,45 @@ std::string PromptAssembler::build_user_profile() const {
     if (tmpl.empty()) return {};
 
     return substitute(tmpl, config_.assistant_name, "");
+}
+
+std::string PromptAssembler::load_instruction(const std::string& name,
+                                               const std::string& zip_code,
+                                               const std::string& day) const {
+    std::string prompts_dir = config_.working_directory + "/prompts";
+    std::string tmpl = read_file(prompts_dir + "/" + name + ".md");
+
+    if (tmpl.empty()) {
+        // Fall back to built-in defaults so the system still works if the
+        // file is missing or unreadable.
+        if (name == "daily_report")         tmpl = DEFAULT_DAILY_REPORT;
+        else if (name == "end_of_day")      tmpl = DEFAULT_END_OF_DAY;
+        else if (name == "meal_prep")       tmpl = DEFAULT_MEAL_PREP;
+        else if (name == "overdue_chores")  tmpl = DEFAULT_OVERDUE_CHORES;
+        else return {};
+    }
+
+    // Compose the weather_hint expansion (only non-empty when enabled).
+    std::string weather_hint;
+    if (!zip_code.empty() && !day.empty()) {
+        if (day == "today") {
+            weather_hint = " Also include today's weather — call get_weather with location \""
+                         + zip_code + "\" and day \"today\".";
+        } else if (day == "tomorrow") {
+            weather_hint = " Also include tomorrow's weather forecast — call get_weather with location \""
+                         + zip_code + "\" and day \"tomorrow\".";
+        }
+    }
+
+    std::string result = substitute(tmpl, config_.assistant_name, "");
+
+    const std::string token = "{{weather_hint}}";
+    size_t pos = 0;
+    while ((pos = result.find(token, pos)) != std::string::npos) {
+        result.replace(pos, token.size(), weather_hint);
+        pos += weather_hint.size();
+    }
+    return result;
 }
 
 std::string PromptAssembler::build_reminders_context() const {

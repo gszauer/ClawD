@@ -28,6 +28,15 @@ public:
     // Write default prompt templates to working/prompts/ if they don't exist
     void write_defaults() const;
 
+    // Load a proactive instruction file (e.g. "daily_report", "end_of_day",
+    // "meal_prep", "overdue_chores") from working/prompts/<name>.md. The
+    // template's {{weather_hint}} token is replaced based on `zip_code` and
+    // `day` ("today"/"tomorrow"/""). Returns the default instruction text if
+    // the file is missing.
+    std::string load_instruction(const std::string& name,
+                                  const std::string& zip_code,
+                                  const std::string& day) const;
+
 private:
     const Config& config_;
     DataStore& meals_;

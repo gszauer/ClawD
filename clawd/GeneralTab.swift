@@ -11,7 +11,7 @@ struct GeneralTab: View {
     @State private var whisperDownloadLabel = ""
     @State private var showAdvanced = false
 
-    private let backends = ["claude", "gemini", "codex", "API"]
+    private let backends = ["claude", "API"]
     private let embeddingModes = ["API", "local", "off"]
     private let audioBackends = ["whisper", "off"]
 
@@ -21,8 +21,6 @@ struct GeneralTab: View {
 
     private static let defaultPaths: [String: String] = [
         "claude": "/Users/user/.local/bin/claude",
-        "gemini": "/opt/homebrew/bin/gemini",
-        "codex": "/opt/homebrew/bin/codex",
     ]
 
     var body: some View {
@@ -41,17 +39,16 @@ struct GeneralTab: View {
                 // ── AI & Models ──
                 card("AI & Models") {
                     // Picker row
-                    HStack(spacing: 16) {
-                        pickerGroup("Backend", selection: $state.backend, options: backends, maxWidth: 280)
+                    HStack(alignment: .bottom, spacing: 20) {
+                        pickerGroup("Backend", selection: $state.backend, options: backends, maxWidth: 140)
                             .onChange(of: state.backend) { _, newValue in
                                 if let path = Self.defaultPaths[newValue] {
                                     state.backendCliPath = path
                                 }
                             }
-                        Spacer()
-                        pickerGroup("Embedding", selection: $state.embeddingMode, options: embeddingModes, maxWidth: 150)
-                        Spacer()
-                        pickerGroup("Audio", selection: $state.audioBackend, options: audioBackends, maxWidth: 130)
+                        pickerGroup("Embedding", selection: $state.embeddingMode, options: embeddingModes, maxWidth: 180)
+                        pickerGroup("Audio", selection: $state.audioBackend, options: audioBackends, maxWidth: 140)
+                        Spacer(minLength: 0)
                     }
 
                     Divider().padding(.vertical, 4)
