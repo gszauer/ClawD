@@ -91,6 +91,11 @@ struct PromptsTab: View {
             }
         }
         .onAppear {
+            // Materialize default prompt files if the folder is missing or
+            // empty. Safe to call even when the core isn't running — the C
+            // function operates on the working directory directly.
+            let wd = state.workingDirectory.isEmpty ? AppState.defaultWorkingDirectory : state.workingDirectory
+            core_write_prompt_defaults(wd)
             scanFiles()
             if selectedFile == nil {
                 selectedFile = files.first { $0 == "system_prompt.md" } ?? files.first
@@ -112,10 +117,13 @@ struct PromptsTab: View {
 
     private func displayName(_ name: String) -> String {
         switch name {
-        case "system_prompt.md": return "System Prompt"
-        case "profile.md":       return "User Profile"
-        case "notes.txt":        return "Notes (reference)"
-        default:                 return name
+        case "system_prompt.md":  return "System Prompt"
+        case "daily_report.md":   return "Daily Report"
+        case "meal_prep.md":      return "Meal Prep"
+        case "overdue_chores.md": return "Overdue Chores"
+        case "end_of_day.md":     return "End of Day"
+        case "notes.txt":         return "Notes (reference)"
+        default:                  return name
         }
     }
 

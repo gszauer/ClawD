@@ -268,24 +268,50 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
         guard let msgChannelId = d["channel_id"] as? String else { return }
         if !channelId.isEmpty && msgChannelId != channelId { return }
 
-        let content = d["content"] as? String ?? ""
+        var content = d["content"] as? String ?? ""
         let messageId = d["id"] as? String ?? ""
         let username = (d["author"] as? [String: Any])?["username"] as? String ?? "User"
 
-        // Check for audio attachments
+        // Classify attachments into audio and image groups. Audio is handled
+        // independently (transcription); image goes through the multimodal
+        // prompt path.
+        var audioAttachments: [(url: String, filename: String)] = []
+        var imageAttachments: [(url: String, filename: String)] = []
         if let attachments = d["attachments"] as? [[String: Any]] {
             for attachment in attachments {
                 guard let contentType = attachment["content_type"] as? String,
-                      contentType.hasPrefix("audio/"),
                       let urlStr = attachment["url"] as? String,
                       let filename = attachment["filename"] as? String
                 else { continue }
-
-                print("[Discord] Audio attachment from \(username): \(filename)")
-                downloadAndTranscribe(url: urlStr, filename: filename,
-                                      messageId: messageId, channelId: msgChannelId,
-                                      username: username)
+                if contentType.hasPrefix("audio/") {
+                    audioAttachments.append((urlStr, filename))
+                } else if contentType.hasPrefix("image/") {
+                    imageAttachments.append((urlStr, filename))
+                }
             }
+        }
+
+        // Dispatch audio attachments — each gets transcribed independently.
+        for audio in audioAttachments {
+            print("[Discord] Audio attachment from \(username): \(audio.filename)")
+            downloadAndTranscribe(url: audio.url, filename: audio.filename,
+                                  messageId: messageId, channelId: msgChannelId,
+                                  username: username)
+        }
+
+        // Dispatch the first image attachment (we only support one per message).
+        // Append a notice to the message text if there were additional images
+        // so the model knows the others were dropped.
+        if let firstImage = imageAttachments.first {
+            if imageAttachments.count > 1 {
+                if !content.isEmpty { content += "\n\n" }
+                content += "[Info] Only one image can be processed per message"
+            }
+            print("[Discord] Image attachment from \(username): \(firstImage.filename)")
+            downloadAndProcessImage(url: firstImage.url, filename: firstImage.filename,
+                                    messageId: messageId, channelId: msgChannelId,
+                                    username: username, content: content)
+            return
         }
 
         guard !content.isEmpty else {
@@ -305,11 +331,52 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
         print("[Discord] Message from \(username) (\(content.count) chars)")
 
         DispatchQueue.global(qos: .userInitiated).async {
-            core_on_message_received(username, content, msgChannelId, messageId)
+            core_on_message_received(username, content, msgChannelId, messageId, "")
             DispatchQueue.main.async {
                 AppState.shared.refreshData()
             }
         }
+    }
+
+    /// Download a Discord image attachment, pass it into the core's multimodal
+    /// path alongside the message text, then clean up the temp file.
+    private func downloadAndProcessImage(url urlStr: String, filename: String,
+                                         messageId: String, channelId: String,
+                                         username: String, content: String) {
+        guard let url = URL(string: urlStr) else { return }
+        let tmpDir = AppState.shared.tmpDirectory
+        try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+        let destPath = "\(tmpDir)/\(messageId)_\(filename)"
+
+        URLSession.shared.downloadTask(with: url) { tempUrl, _, error in
+            if let error {
+                print("[Discord] Image download failed: \(error.localizedDescription)")
+                AppState.shared.showToast("Discord image download failed: \(error.localizedDescription)", isError: true)
+                return
+            }
+            guard let tempUrl else { return }
+
+            // Synchronous move inside the delegate callback — the OS deletes
+            // the temp file once this closure returns.
+            let dest = URL(fileURLWithPath: destPath)
+            do {
+                try? FileManager.default.removeItem(at: dest)
+                try FileManager.default.moveItem(at: tempUrl, to: dest)
+                print("[Discord] Saved image: \(destPath)")
+            } catch {
+                print("[Discord] Failed to save image: \(error.localizedDescription)")
+                return
+            }
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                core_on_message_received(username, content, channelId, messageId, destPath)
+                // Clean up the temp file after the core finishes with it.
+                try? FileManager.default.removeItem(atPath: destPath)
+                DispatchQueue.main.async {
+                    AppState.shared.refreshData()
+                }
+            }
+        }.resume()
     }
 
     private func downloadAndTranscribe(url urlStr: String, filename: String,
@@ -366,7 +433,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
 
             // Feed to the AI as a user message (blocks until LLM responds)
             let userMessage = "[Voice message transcript]: \(transcript)"
-            core_on_message_received(username, userMessage, channelId, messageId)
+            core_on_message_received(username, userMessage, channelId, messageId, "")
 
             // Post transcript to Discord after the AI response
             self?.sendChannelMessage("Transcribed audio: \(transcript)", to: channelId)
@@ -457,6 +524,15 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
             return
         }
 
+        // Discord's max message length is 4000 chars. Split longer content
+        // into chunks, preferring paragraph/line boundaries where possible.
+        let chunks = splitForDiscord(content, limit: 3900) // leave headroom
+        for chunk in chunks {
+            postSingleMessage(chunk, to: targetChannel)
+        }
+    }
+
+    private func postSingleMessage(_ content: String, to targetChannel: String) {
         let url = URL(string: "\(apiBase)/channels/\(targetChannel)/messages")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -469,14 +545,40 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error {
                 print("[Discord] Send message error: \(error.localizedDescription)")
+                AppState.shared.showToast("Discord send error: \(error.localizedDescription)", isError: true)
                 return
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status < 200 || status >= 300 {
                 let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
                 print("[Discord] Send message failed (status \(status)): \(body.prefix(300))")
+                AppState.shared.showToast("Discord send failed (status \(status))", isError: true)
             }
         }.resume()
+    }
+
+    /// Split `text` into chunks no longer than `limit` characters, preferring
+    /// to break at double newlines, then single newlines, then word boundaries.
+    /// Never splits mid-word unless a single word exceeds the limit.
+    private func splitForDiscord(_ text: String, limit: Int) -> [String] {
+        if text.count <= limit { return [text] }
+        var chunks: [String] = []
+        var remaining = Substring(text)
+        while remaining.count > limit {
+            let window = remaining.prefix(limit)
+            // Prefer double newline, then single newline, then space.
+            let splitAt = window.range(of: "\n\n", options: .backwards)?.lowerBound
+                ?? window.range(of: "\n", options: .backwards)?.lowerBound
+                ?? window.range(of: " ", options: .backwards)?.lowerBound
+                ?? window.endIndex
+            let chunk = remaining[..<splitAt]
+            chunks.append(String(chunk).trimmingCharacters(in: .whitespacesAndNewlines))
+            remaining = remaining[splitAt...].drop { $0 == "\n" || $0 == " " }
+        }
+        if !remaining.isEmpty {
+            chunks.append(String(remaining).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return chunks.filter { !$0.isEmpty }
     }
 
     // MARK: - Reactions

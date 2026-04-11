@@ -25,8 +25,16 @@ public:
     std::string assemble_proactive(std::string_view instruction,
                                    const std::string& tool_definitions) const;
 
-    // Write default prompt templates to working/prompts/ if they don't exist
-    void write_defaults() const;
+    // Load a proactive instruction template from working/prompts/<name>.md.
+    // Applies {{weather_hint}} and other standard substitutions. Falls back to
+    // the built-in default if the file is missing. Safe to call on every task
+    // fire — the file is re-read each time so edits take effect immediately.
+    std::string load_proactive_instruction(const std::string& name) const;
+
+    // Write default prompt templates to working/prompts/ if they don't exist.
+    // Static so it can be called without a fully-initialized core (e.g. from
+    // the Prompts tab before the user has clicked Start).
+    static void write_defaults(const std::string& working_directory);
 
 private:
     const Config& config_;
@@ -38,7 +46,6 @@ private:
     CalendarManager* calendar_;
 
     std::string build_system_prompt(const std::string& tool_definitions) const;
-    std::string build_user_profile() const;
     std::string build_dynamic_context(
         const std::vector<std::string>& relevant_note_ids) const;
     std::string build_reminders_context() const;

@@ -75,7 +75,8 @@ static void write_file_if_missing(const std::string& path, const std::string& co
 
 static std::string substitute(const std::string& tmpl,
                               const std::string& assistant_name,
-                              const std::string& tool_definitions) {
+                              const std::string& tool_definitions,
+                              const std::string& weather_hint = "") {
     std::string result = tmpl;
 
     auto replace_all = [&](const std::string& token, const std::string& value) {
@@ -91,6 +92,7 @@ static std::string substitute(const std::string& tmpl,
     replace_all("{{date}}", today_date_str());
     replace_all("{{day_of_week}}", current_day_of_week());
     replace_all("{{tools}}", tool_definitions);
+    replace_all("{{weather_hint}}", weather_hint);
 
     return result;
 }
@@ -109,45 +111,119 @@ respond with the exact format:
 Available tools:
 {{tools}})";
 
-static const char* DEFAULT_PROFILE = "";
+// --- Proactive instruction defaults ---
+// These are the "system messages" the assistant sends itself on a schedule
+// (daily reports, meal prep reminders, overdue-chore nags, end-of-day summaries).
+// Users can customize them via the Prompts tab.
+
+static const char* DEFAULT_DAILY_REPORT =
+R"(Generate my morning briefing for today. Include today's meals, calendar events, due chores, and upcoming reminders.{{weather_hint}})";
+
+static const char* DEFAULT_MEAL_PREP =
+R"(What's for dinner tonight? Give a brief meal prep reminder including any prep that should be started now.)";
+
+static const char* DEFAULT_OVERDUE_CHORES =
+R"(List any overdue chores that need attention today.)";
+
+static const char* DEFAULT_END_OF_DAY =
+R"(Generate my end-of-day summary. What got done today, what didn't, and a preview of tomorrow.{{weather_hint}})";
+
+// Map proactive instruction names to their default templates and to the
+// "today" vs. "tomorrow" weather phrasing the hint substitutes to.
+struct ProactiveDefault {
+    const char* filename;
+    const char* default_body;
+    const char* weather_phrase; // empty string = no weather hint for this one
+};
+
+static const ProactiveDefault PROACTIVE_DEFAULTS[] = {
+    { "daily_report.md",   DEFAULT_DAILY_REPORT,   " Also include today's weather forecast using the get_weather tool." },
+    { "meal_prep.md",      DEFAULT_MEAL_PREP,      "" },
+    { "overdue_chores.md", DEFAULT_OVERDUE_CHORES, "" },
+    { "end_of_day.md",     DEFAULT_END_OF_DAY,     " Also include tomorrow's weather forecast using the get_weather tool." },
+};
+
+static const ProactiveDefault* find_proactive_default(const std::string& name) {
+    std::string filename = name + ".md";
+    for (const auto& pd : PROACTIVE_DEFAULTS) {
+        if (filename == pd.filename) return &pd;
+    }
+    return nullptr;
+}
 
 static const char* NOTES_CONTENT =
 R"(# Prompt Template Substitutions
 
-The following {{variables}} are replaced at runtime in system_prompt.md and profile.md:
+The following {{variables}} are replaced at runtime in the prompt files below:
 
   {{assistant_name}}  - The assistant's name from config (e.g. "Friday")
   {{datetime}}        - Current date and time (e.g. "2026-03-29 17:30:00")
   {{date}}            - Current date (e.g. "2026-03-29")
   {{day_of_week}}     - Current day name (e.g. "Sunday")
   {{tools}}           - The full list of available tool definitions
+  {{weather_hint}}    - Expands to a "use the get_weather tool" instruction
+                        when weather is enabled in settings, otherwise empty.
+                        Only meaningful in daily_report.md and end_of_day.md.
 
 ## Files
 
-  system_prompt.md  - The system prompt sent at the start of every AI call.
-                      This defines the assistant's personality and tool instructions.
+  system_prompt.md    - Sent at the start of every AI call.
+                        Defines the assistant's personality and tool instructions.
+                        Put any user profile / preferences / persistent context
+                        (dietary restrictions, wake time, chore meanings, etc.)
+                        here as well.
 
-  profile.md        - User profile / preferences injected after the system prompt.
-                      Use this for dietary restrictions, wake time, chore color
-                      meanings, or any personal context the assistant should know.
+  daily_report.md     - Instruction the assistant gives itself for the morning briefing.
+  meal_prep.md        - Instruction for the meal-prep reminder.
+  overdue_chores.md   - Instruction for the overdue-chores nag.
+  end_of_day.md       - Instruction for the end-of-day summary.
 
-  notes.txt         - This file. Reference only, not sent to the AI.
+  notes.txt           - This file. Reference only, not sent to the AI.
 
 ## Editing
 
-Edit these files with any text editor. Changes take effect on the next app start
-(or when the config is reloaded). The defaults are regenerated if you delete a file.
+Edit these files with any text editor (or via the Prompts tab in the app).
+Changes take effect on the next AI call — the files are re-read each time.
+Delete a file to regenerate its default on next launch.
 )";
 
 // --- Write defaults on startup ---
 
-void PromptAssembler::write_defaults() const {
-    std::string prompts_dir = config_.working_directory + "/prompts";
+void PromptAssembler::write_defaults(const std::string& working_directory) {
+    if (working_directory.empty()) return;
+    mkdir(working_directory.c_str(), 0755);
+
+    std::string prompts_dir = working_directory + "/prompts";
     mkdir(prompts_dir.c_str(), 0755);
 
     write_file_if_missing(prompts_dir + "/system_prompt.md", DEFAULT_SYSTEM_PROMPT);
-    write_file_if_missing(prompts_dir + "/profile.md", DEFAULT_PROFILE);
     write_file_if_missing(prompts_dir + "/notes.txt", NOTES_CONTENT);
+
+    for (const auto& pd : PROACTIVE_DEFAULTS) {
+        write_file_if_missing(prompts_dir + "/" + pd.filename, pd.default_body);
+    }
+}
+
+std::string PromptAssembler::load_proactive_instruction(const std::string& name) const {
+    const ProactiveDefault* pd = find_proactive_default(name);
+    if (!pd) return {};
+
+    std::string prompts_dir = config_.working_directory + "/prompts";
+    std::string tmpl = read_file(prompts_dir + "/" + pd->filename);
+    if (tmpl.empty()) tmpl = pd->default_body;
+
+    // Trim trailing whitespace/newlines the user may have left in the file.
+    while (!tmpl.empty() && (tmpl.back() == '\n' || tmpl.back() == '\r' ||
+                             tmpl.back() == ' '  || tmpl.back() == '\t')) {
+        tmpl.pop_back();
+    }
+
+    std::string weather_hint;
+    if (config_.weather_enabled && pd->weather_phrase && *pd->weather_phrase) {
+        weather_hint = pd->weather_phrase;
+    }
+
+    return substitute(tmpl, config_.assistant_name, /*tool_definitions=*/"", weather_hint);
 }
 
 // --- Build methods ---
@@ -169,15 +245,6 @@ std::string PromptAssembler::build_system_prompt(
     if (tmpl.empty()) tmpl = DEFAULT_SYSTEM_PROMPT;
 
     return substitute(tmpl, config_.assistant_name, tool_definitions);
-}
-
-std::string PromptAssembler::build_user_profile() const {
-    std::string prompts_dir = config_.working_directory + "/prompts";
-
-    std::string tmpl = read_file(prompts_dir + "/profile.md");
-    if (tmpl.empty()) return {};
-
-    return substitute(tmpl, config_.assistant_name, "");
 }
 
 std::string PromptAssembler::build_reminders_context() const {
@@ -353,11 +420,6 @@ std::string PromptAssembler::assemble(
 
     prompt << build_system_prompt(tool_definitions) << "\n\n";
 
-    std::string profile = build_user_profile();
-    if (!profile.empty()) {
-        prompt << "## User Profile\n" << profile << "\n\n";
-    }
-
     prompt << build_dynamic_context(relevant_note_ids);
 
     std::string history = history_.load_recent(config_.chat_history_exchanges);
@@ -377,11 +439,6 @@ std::string PromptAssembler::assemble_proactive(
     std::ostringstream prompt;
 
     prompt << build_system_prompt(tool_definitions) << "\n\n";
-
-    std::string profile = build_user_profile();
-    if (!profile.empty()) {
-        prompt << "## User Profile\n" << profile << "\n\n";
-    }
 
     prompt << build_dynamic_context({});
 

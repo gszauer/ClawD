@@ -23,9 +23,13 @@ void core_initialize(const char* config_path, struct PlatformCallbacks callbacks
                      const char* working_dir_override);
 void core_shutdown(void);
 
-// Discord events
+// Discord events.
+// image_path is optional (NULL or "" for text-only). When non-empty and a
+// vision projector is loaded, the image is tokenized via mtmd and fed into
+// the same prompt as the text.
 void core_on_message_received(const char* user, const char* text,
-                              const char* channel_id, const char* message_id);
+                              const char* channel_id, const char* message_id,
+                              const char* image_path);
 
 // Local chat tab: send a text message with an optional attached image.
 // image_path may be NULL or empty for text-only. Unlike Discord, there's no
@@ -66,6 +70,12 @@ int core_calendar_sync(void);
 
 // Reload all data stores from disk (after external edits).
 void core_reload_data(void);
+
+// Ensure working_dir/prompts/ exists and write the default prompt templates
+// for any files that are missing. Safe to call before core_initialize — used
+// by the Prompts tab so the user can see and edit templates without having
+// to start the core first.
+void core_write_prompt_defaults(const char* working_dir);
 
 // Re-index a note's embedding after it was edited on disk.
 void core_reindex_note(const char* note_id);

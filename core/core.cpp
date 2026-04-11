@@ -287,40 +287,25 @@ static void execute_scheduled_task(const ScheduledTask& task) {
             break;
         }
 
-        case TaskType::DAILY_REPORT: {
-            std::string instruction =
-                "Generate my morning briefing for today. "
-                "Include today's meals, calendar events, due chores, and upcoming reminders.";
-            if (g_config.weather_enabled)
-                instruction += " Also include today's weather forecast using the get_weather tool.";
-            run_proactive("Daily Report", instruction);
+        case TaskType::DAILY_REPORT:
+            run_proactive("Daily Report", g_prompt->load_proactive_instruction("daily_report"));
             reschedule_notification("daily_report", TaskType::DAILY_REPORT);
             break;
-        }
 
         case TaskType::MEAL_PREP_REMINDER:
-            run_proactive("Meal Prep",
-                "What's for dinner tonight? Give a brief meal prep reminder "
-                "including any prep that should be started now.");
+            run_proactive("Meal Prep", g_prompt->load_proactive_instruction("meal_prep"));
             reschedule_notification("meal_prep_reminder", TaskType::MEAL_PREP_REMINDER);
             break;
 
         case TaskType::OVERDUE_CHORES:
-            run_proactive("Overdue Chores",
-                "List any overdue chores that need attention today.");
+            run_proactive("Overdue Chores", g_prompt->load_proactive_instruction("overdue_chores"));
             reschedule_notification("overdue_chores", TaskType::OVERDUE_CHORES);
             break;
 
-        case TaskType::END_OF_DAY_SUMMARY: {
-            std::string instruction =
-                "Generate my end-of-day summary. What got done today, "
-                "what didn't, and a preview of tomorrow.";
-            if (g_config.weather_enabled)
-                instruction += " Also include tomorrow's weather forecast using the get_weather tool.";
-            run_proactive("End of Day", instruction);
+        case TaskType::END_OF_DAY_SUMMARY:
+            run_proactive("End of Day", g_prompt->load_proactive_instruction("end_of_day"));
             reschedule_notification("end_of_day_summary", TaskType::END_OF_DAY_SUMMARY);
             break;
-        }
 
         case TaskType::CALENDAR_SYNC: {
             if (g_calendar) {
@@ -530,7 +515,7 @@ void core_initialize(const char* config_path, PlatformCallbacks callbacks,
     g_prompt = std::make_unique<PromptAssembler>(
         g_config, *g_meals, *g_chores, *g_reminders, *g_notes, *g_chat,
         g_calendar.get());
-    g_prompt->write_defaults();
+    PromptAssembler::write_defaults(g_config.working_directory);
 
     // Populate scheduled tasks
     populate_scheduled_tasks();
@@ -566,11 +551,6 @@ static void handle_message_impl(const std::string& user_str,
                                 const std::string& image_path,
                                 const std::string& channel_id_in,
                                 const std::string& message_id) {
-    std::cerr << "[Core] handle_message_impl ENTER user=" << user_str
-              << " text_len=" << text_str.size()
-              << " channel=" << channel_id_in
-              << " msg_id=" << message_id << std::endl;
-
     std::string chan_str = channel_id_in;
     const std::string& msg_str = message_id;
 
@@ -579,10 +559,7 @@ static void handle_message_impl(const std::string& user_str,
         chan_str = g_config.discord_channel_id;
     }
 
-    if (text_str.empty() && image_path.empty()) {
-        std::cerr << "[Core] handle_message_impl EARLY RETURN: empty text and image" << std::endl;
-        return;
-    }
+    if (text_str.empty() && image_path.empty()) return;
 
     // Add acknowledgment reaction (crab emoji by default)
     if (g_callbacks.add_reaction && !chan_str.empty() && !msg_str.empty()
@@ -593,14 +570,11 @@ static void handle_message_impl(const std::string& user_str,
 
     // Append to chat history
     g_chat->append_user(user_str, text_str.empty() ? "(image)" : text_str);
-    std::cerr << "[Core] handle_message_impl appended user message to chat history" << std::endl;
 
     // Get embedding for note search (text only — images don't embed)
     std::vector<std::string> relevant_note_ids;
     if (!text_str.empty()) {
-        std::cerr << "[Core] handle_message_impl calling embed_text..." << std::endl;
         auto query_embedding = embed_text(text_str);
-        std::cerr << "[Core] handle_message_impl embed_text returned dim=" << query_embedding.size() << std::endl;
         if (!query_embedding.empty() && g_note_search->is_initialized()) {
             relevant_note_ids = g_note_search->search(query_embedding, g_config.note_search_results);
         }
@@ -611,13 +585,9 @@ static void handle_message_impl(const std::string& user_str,
     std::string display_name = (user_str == "User") ? "Local" : user_str;
     std::string prompt = g_prompt->assemble(text_str, display_name, relevant_note_ids,
                                             g_tools->get_definitions());
-    std::cerr << "[Core] handle_message_impl prompt assembled, len=" << prompt.size()
-              << "  calling Backend::execute..." << std::endl;
 
     // Execute backend (with optional image)
     std::string response = Backend::execute(g_config, prompt, image_path);
-    std::cerr << "[Core] handle_message_impl Backend::execute returned, response_len="
-              << response.size() << std::endl;
 
     // Parse tool calls
     auto tool_calls = parse_tool_calls(response);
@@ -676,10 +646,6 @@ static void handle_message_impl(const std::string& user_str,
     g_chat->append_assistant(clean_response);
 
     // Send to Discord (errors are useful feedback there)
-    std::cerr << "[Core] handle_message_impl sending response: callback="
-              << (g_response_callback ? "set" : "null")
-              << " channel=" << chan_str
-              << " clean_len=" << clean_response.size() << std::endl;
     if (g_response_callback && !chan_str.empty()) {
         g_response_callback(chan_str.c_str(), clean_response.c_str());
     } else {
@@ -702,11 +668,12 @@ static void handle_message_impl(const std::string& user_str,
 }
 
 void core_on_message_received(const char* user, const char* text,
-                              const char* channel_id, const char* message_id) {
+                              const char* channel_id, const char* message_id,
+                              const char* image_path) {
     handle_message_impl(
         user    ? user    : "User",
         text    ? text    : "",
-        /*image_path=*/"",
+        image_path ? image_path : "",
         channel_id ? channel_id : "",
         message_id ? message_id : "");
 }
@@ -861,6 +828,11 @@ extern "C" void core_reload_data() {
     if (g_chores) g_chores->load();
     if (g_reminders) g_reminders->load();
     if (g_notes) g_notes->load();
+}
+
+extern "C" void core_write_prompt_defaults(const char* working_dir) {
+    if (!working_dir || !*working_dir) return;
+    PromptAssembler::write_defaults(working_dir);
 }
 
 extern "C" void core_append_assistant(const char* text) {

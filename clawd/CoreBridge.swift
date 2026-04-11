@@ -121,7 +121,7 @@ final class CoreBridge: @unchecked Sendable {
 
     func sendMessage(user: String, text: String, channelId: String = "", messageId: String = "") {
         guard isRunning else { return }
-        core_on_message_received(user, text, channelId, messageId)
+        core_on_message_received(user, text, channelId, messageId, "")
     }
 
     /// Send a local chat message with an optional attached image. Only used
