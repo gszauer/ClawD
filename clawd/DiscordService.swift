@@ -20,6 +20,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 5
     private var awaitingHeartbeatAck = false
+    private var warnedAboutEmptyContent = false
 
     private let apiBase = "https://discord.com/api/v10"
 
@@ -287,7 +288,19 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
             }
         }
 
-        guard !content.isEmpty else { return }
+        guard !content.isEmpty else {
+            // Discord delivers MESSAGE_CREATE events with empty `content` when
+            // the MESSAGE CONTENT intent isn't granted in the Developer Portal.
+            // Warn once per session so the failure isn't silent.
+            let hasAttachments = (d["attachments"] as? [[String: Any]])?.isEmpty == false
+            if !hasAttachments && !warnedAboutEmptyContent {
+                warnedAboutEmptyContent = true
+                AppState.shared.showToast(
+                    "Discord: message arrived with empty content. Enable MESSAGE CONTENT INTENT in the Developer Portal.",
+                    isError: true)
+            }
+            return
+        }
 
         print("[Discord] Message from \(username) (\(content.count) chars)")
 

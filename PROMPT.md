@@ -2,13 +2,15 @@
 
 ## Overview
 
-A C/C++ personal assistant harness that connects to Discord, assembles contextual prompts, routes them to an AI backend (Claude CLI, Gemini CLI, Codex CLI, or a local OpenAI-compatible API), parses tool calls from the AI's response, and executes them against local data stores. The application runs as a native macOS app (SwiftUI) wrapping the C++17 core. The assistant's name is ClawD.
+A C/C++ personal assistant harness that connects to Discord, assembles contextual prompts, routes them to a **self-hosted Gemma 4** model (llama.cpp + Metal GPU acceleration, with multimodal vision support), parses tool calls from the AI's response, and executes them against local data stores. The application runs as a native macOS app (SwiftUI) wrapping the C++17 core. The assistant's name is ClawD.
+
+Everything runs locally. There is no cloud backend. One loaded Gemma model serves both chat generation and note-search embeddings via two `llama_context`s sharing the same `llama_model`.
 
 ## Architecture
 
 The system is split into two layers:
 
-**C++ Core** (`core/`) — portable, no platform dependencies. Owns all logic: prompt assembly, tool parsing, tool execution, data store management, task scheduling, semantic note search, Google Calendar integration, and AI backend execution. Exposes a C-compatible interface for the native layer to call into.
+**C++ Core** (`core/`) — owns all logic: prompt assembly, tool parsing, tool execution, data store management, task scheduling, semantic note search, Google Calendar integration, and self-hosted Gemma inference via llama.cpp + mtmd. Exposes a C-compatible interface for the native layer to call into.
 
 **Swift Native Layer** (`clawd/`) — owns the application lifecycle, UI (SwiftUI tabbed window), networking (NSURLSession for HTTP, URLSessionWebSocketTask for Discord), desktop notifications (UNUserNotificationCenter), timers, and Google service account JWT authentication. Calls into the C++ core via a bridging header and provides OS services through PlatformCallbacks function pointers.
 
@@ -29,9 +31,12 @@ Both Phase 1 (C++ core) and Phase 2 (Swift native layer) are implemented and fun
 
 ### What Works
 
+- Fully self-hosted Gemma 4 (12B or 27B Q4_K_M) via llama.cpp with Metal GPU acceleration
+- Multimodal: attach an image to a chat message via the Chat tab's paperclip button; image tokens flow through mtmd + the generation context
+- Note-search embeddings from the same Gemma model (second llama_context with mean pooling)
 - Full AI chat via local UI and Discord
 - All tool handlers with complete CRUD (create, read, update, delete)
-- Semantic note search via HNSWLIB + configurable embedding endpoint
+- Semantic note search via HNSWLIB, dimension-aware with automatic index invalidation on model swap
 - Google Calendar integration (service account auth, sync, live queries)
 - Local-only calendar fallback when Google isn't connected
 - Discord WebSocket gateway with reconnect, reactions, and message routing
@@ -42,6 +47,7 @@ Both Phase 1 (C++ core) and Phase 2 (Swift native layer) are implemented and fun
 - Non-blocking toast notifications in the UI for errors and status
 - Inline markdown editor for all data types with frontmatter validation
 - Chat history persistence with daily markdown logs
+- User-configurable context length in the Advanced section (default: model's trained max, typically 128k for Gemma 4)
 
 ---
 
@@ -53,19 +59,29 @@ Both Phase 1 (C++ core) and Phase 2 (Swift native layer) are implemented and fun
 
 No external package managers (no CocoaPods, no SPM). Everything is in the repo.
 
-**llama.cpp** — pre-built static libraries in `deps/lib/` with headers in `deps/include/`. Used for local embedding inference via `local_embed.h/cpp`. Linked as `libllama.a` + ggml libs.
+**llama.cpp** — pre-built static libraries in `deps/lib/` with headers in `deps/include/`. Built with `GGML_METAL=ON` (Metal GPU backend), `GGML_METAL_EMBED_LIBRARY=ON` (shaders baked into the static lib), and `LLAMA_BUILD_TOOLS=ON` (mtmd multimodal library). Linked as `libmtmd.a` + `libllama.a` + `libggml*.a` + `libggml-metal.a`. The rebuild is reproducible via `deps/build_llama.sh`, which pins a specific llama.cpp commit, clones, builds, and copies the resulting `.a` files and headers into `deps/lib/` and `deps/include/`.
+
+**libmtmd** (part of the llama.cpp build) — llama.cpp's multimodal tokens library. Handles vision projectors (CLIP-style), image preprocessing, and the `mtmd_tokenize` → `mtmd_helper_eval_chunks` pipeline used in `local_gemma.cpp` for image input.
 
 **whisper.cpp** — pre-built static library in `deps/lib/libwhisper.a` with `deps/include/whisper.h`. Used for local audio transcription via `whisper_transcribe.h/cpp`. Converts OGG to WAV (via macOS `afconvert`), resamples to 16kHz, runs whisper inference.
 
-### Embedding Generation
+### Gemma Integration (`local_gemma.h/cpp`)
 
-Two modes, selectable in the UI:
+One module owns the entire llama.cpp world:
 
-**API mode** — calls an external OpenAI-compatible `/v1/embeddings` endpoint (e.g. LM Studio). Default: `http://localhost:1234/v1/embeddings` with model `text-embedding-embeddinggemma-300m`.
+- **One `llama_model*`** loaded from the Gemma LM GGUF (`llama_model_load_from_file` with `n_gpu_layers = 999` to offload everything to Metal).
+- **One `mtmd_context*`** loaded from the vision projector GGUF (optional). If it fails to load, text-only mode is retained and `local_gemma_has_vision()` returns false.
+- **Two `llama_context*`** sharing the model weights:
+  - `g_ctx_gen` — generation context. `n_ctx` is user-configurable (0 = use `llama_model_n_ctx_train`), `type_k = type_v = GGML_TYPE_Q8_0` (quantized KV cache, halves memory to make 128k fit on 24 GB Apple Silicon), `flash_attn_type = AUTO`, `offload_kqv = true`.
+  - `g_ctx_embed` — embedding context. `n_ctx = 512`, `embeddings = true`, `pooling_type = LLAMA_POOLING_TYPE_MEAN`, FP16 KV cache (tiny, doesn't matter).
+- **Sampling chain** (hardcoded): top-k 40 → top-p 0.95 → temperature 0.7 → dist.
+- **Chat template**: the assembled prompt is wrapped in Gemma turn tokens (`<start_of_turn>user\n...<end_of_turn>\n<start_of_turn>model\n`). The PromptAssembler already encodes turn structure via markdown headers inside the user turn.
+- **Text path**: `llama_batch_get_one` → `llama_decode` prefill → sampler loop (EOS / `<end_of_turn>` / `max_tokens` stop).
+- **Image path**: `mtmd_helper_bitmap_init_from_file` → build prompt with `mtmd_default_marker()` placeholder → `mtmd_tokenize` → `mtmd_helper_eval_chunks` → sample as normal.
+- **Embedding path**: tokenize (truncated to 512) → `llama_encode` on `g_ctx_embed` → `llama_get_embeddings_seq` → L2 normalize.
+- **Graceful degradation**: generation-context creation retries at half n_ctx on OOM. mmproj init failures clear `has_vision_` and keep text-only running.
 
-**Local mode** — runs a GGUF embedding model in-process via llama.cpp (`local_embed.h/cpp`). Default model: nomic-embed-text-v1.5 (768-dim, downloadable from the UI).
-
-If no embedding backend is configured, semantic search falls back to title substring matching.
+Semantic search falls back to title matching only if Gemma is not loaded at all.
 
 ### Audio Transcription
 
@@ -96,23 +112,24 @@ Assistant/
     tool_handler.h / tool_handler.cpp
     tool_handlers.h / tool_handlers.cpp
     prompt_assembler.h / prompt_assembler.cpp
-    backend.h / backend.cpp
+    backend.h / backend.cpp          # Thin wrapper calling local_gemma_generate
     task_queue.h / task_queue.cpp
     note_search.h / note_search.cpp
-    local_embed.h / local_embed.cpp
+    local_gemma.h / local_gemma.cpp  # Gemma model + mtmd + generation + embeddings
     whisper_transcribe.h / whisper_transcribe.cpp
     calendar.h / calendar.cpp
     http_client.h / http_client.cpp
     cJSON.h / cJSON.c
     hnswlib/                  # Header-only library (7 headers)
 
-  deps/                       # Pre-built static libraries
-    include/                  # llama.h, whisper.h, ggml headers
-    lib/                      # libllama.a, libwhisper.a, libggml*.a
+  deps/                       # Pre-built static libraries + rebuild script
+    build_llama.sh            # Reproducible llama.cpp rebuild (Metal + mtmd)
+    include/                  # llama.h, mtmd.h, whisper.h, ggml*.h, gguf.h
+    lib/                      # libmtmd.a, libllama.a, libwhisper.a, libggml*.a, libggml-metal.a
 
   clawd/                      # Swift native layer
     clawdApp.swift            # @main entry point
-    ContentView.swift         # 7-tab layout + toast overlay
+    ContentView.swift         # NavigationSplitView sidebar (7 sections) + toast overlay
     AppState.swift            # @Observable singleton, config I/O, data refresh
     CoreBridge.swift          # C++ core wrapper, platform callbacks
     DiscordService.swift      # WebSocket gateway + REST API
@@ -121,7 +138,7 @@ Assistant/
     TimerService.swift        # Timer callbacks
     EditHelpers.swift         # Frontmatter validation on edit
     GeneralTab.swift          # Config UI
-    ChatTab.swift             # Chat log + message input
+    ChatTab.swift             # Chat log + message input + paperclip image attach
     NotesTab.swift            # Notes list + editor
     MealsTab.swift            # Meals list + editor
     ChoresTab.swift           # Chores list + editor
@@ -139,10 +156,14 @@ Assistant/
 ```
 working/
   config.json                 # Application configuration
+  gemma-4-*-it-Q4_K_M.gguf    # Gemma 4 LM weights (12B or 27B, downloaded from UI)
+  mmproj-gemma-4-*.gguf       # Gemma 4 vision projector (downloaded alongside LM)
+  whisper-ggml-*.en.bin       # Optional whisper model for audio transcription
   calendar.json               # Google service account credentials (user-provided)
   calendar_cache.json         # Cached calendar events
   notes.index                 # HNSWLIB binary search index
   index_map.json              # HNSWLIB label-to-filename mapping
+  .embed_dim                  # Sidecar recording the current embedding dimension (for migration)
   tmp/                        # Temporary files (audio downloads, cleared on launch)
 
   chat/
@@ -169,13 +190,11 @@ A single `config.json` in the working directory. The native UI reads and writes 
 
 ```json
 {
-  "backend": "claude",
-  "backend_cli_path": "/Users/user/.local/bin/claude",
-  "backend_api_url": "http://localhost:1234/v1/chat/completions",
-  "backend_api_key": "",
-  "backend_api_model": "",
-  "embedding_url": "http://localhost:1234/v1/embeddings",
-  "embedding_model": "text-embedding-embeddinggemma-300m",
+  "gemma_model_path": "/Users/user/Desktop/ClawD/working/gemma-4-12b-it-Q4_K_M.gguf",
+  "gemma_mmproj_path": "/Users/user/Desktop/ClawD/working/mmproj-gemma-4-12b-it-F16.gguf",
+  "gemma_n_ctx": 0,
+  "audio_backend": "off",
+  "whisper_model_path": "",
   "assistant_name": "ClawD",
   "assistant_emoji": "\ud83e\udd80",
   "discord_bot_token": "...",
@@ -186,7 +205,7 @@ A single `config.json` in the working directory. The native UI reads and writes 
   "heartbeat_interval_seconds": 30,
   "note_search_results": 5,
   "max_notes_in_index": 10000,
-  "working_directory": "/Users/user/Desktop/Assistant/working",
+  "working_directory": "/Users/user/Desktop/ClawD/working",
   "notifications": {
     "daily_report": { "enabled": true, "time": "07:00" },
     "calendar_heads_up": { "enabled": true, "minutes_before": 30 },
@@ -197,16 +216,12 @@ A single `config.json` in the working directory. The native UI reads and writes 
 }
 ```
 
-Backend options: `"claude"`, `"gemini"`, `"codex"`, `"API"`. CLI backends use `backend_cli_path`. API backend uses `backend_api_url` with optional `backend_api_key` sent as `Authorization: Bearer`. Claude CLI is invoked with `--allowedTools WebSearch`.
-
-Embedding options: `"API"` (remote server), `"local"` (llama.cpp with GGUF model), `"off"`.
+Gemma fields:
+- `gemma_model_path` — absolute path to the Gemma 4 LM GGUF file. Required for chat to work.
+- `gemma_mmproj_path` — absolute path to the vision projector GGUF. Optional: if empty, vision is disabled but chat and embeddings still work.
+- `gemma_n_ctx` — context length for generation. `0` means "use model's trained max" (128k for Gemma 4). Non-zero values clamp to `[512, llama_model_n_ctx_train]`.
 
 Audio options: `"whisper"` (local whisper.cpp transcription), `"off"` (default).
-
-Default CLI paths:
-- Claude: `/Users/user/.local/bin/claude`
-- Gemini: `/opt/homebrew/bin/gemini`
-- Codex: `/opt/homebrew/bin/codex`
 
 ---
 
@@ -317,14 +332,20 @@ struct PlatformCallbacks {
 void core_initialize(const char* config_path, PlatformCallbacks callbacks,
                      const char* working_dir_override);
 void core_shutdown(void);
+
+// Chat entry points
 void core_on_message_received(const char* user, const char* text,
                               const char* channel_id, const char* message_id);
+void core_send_message_with_image(const char* user, const char* text,
+                                  const char* image_path);  // Local chat tab only
+int  core_has_vision(void);                                 // Non-zero if mmproj is loaded
+
 void core_on_timer_fired(int timer_id);
 void core_on_config_changed(void);
 void core_check_tasks(void);
 void core_reload_data(void);
 void core_set_calendar_token(const char* token);
-int core_calendar_sync(void);
+int  core_calendar_sync(void);
 void core_reindex_note(const char* note_id);
 const char* core_transcribe_audio(const char* file_path);
 void core_append_assistant(const char* text);
@@ -339,6 +360,8 @@ const char* core_get_reminders(void);
 const char* core_get_notes(void);
 const char* core_get_chat_history(const char* date);
 ```
+
+`core_on_message_received` and `core_send_message_with_image` both delegate to a shared internal `handle_message_impl`, which embeds the user text, assembles the prompt, calls `Backend::execute` (which forwards to `local_gemma_generate` with an optional image path), parses tool calls, and threads tool results through a follow-up prompt. The Discord code path passes `image_path = ""`; only the Chat tab's paperclip button passes a non-empty image path.
 
 ---
 
@@ -366,11 +389,11 @@ When a tool executes, the corresponding emoji is added to the user's Discord mes
 
 The assistant emoji (crab by default) is added when processing starts and removed when the response is sent.
 
-### Available Tools (23 total)
+### Available Tools (24 total)
 
 **Reminders:** `set_reminder`, `list_reminders`, `edit_reminder`, `delete_reminder`
 **Meals:** `add_meal`, `get_meals`, `get_meal_details`, `edit_meal`, `delete_meal`, `swap_meal`
-**Chores:** `add_chore`, `edit_chore`, `complete_chore`, `list_chores`, `delete_chore`
+**Chores:** `add_chore`, `edit_chore`, `complete_chore`, `list_chores`, `get_chore_details`, `delete_chore`
 **Notes:** `save_note`, `edit_note`, `search_notes`, `list_notes`, `delete_note`
 **Calendar:** `get_calendar`, `create_calendar_event`, `edit_calendar_event`, `delete_calendar_event`
 
@@ -484,12 +507,14 @@ Intents: `GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT` (37377). 
 
 ## Native UI (SwiftUI)
 
+The UI uses a `NavigationSplitView` with a left sidebar listing the seven sections. `Tab` is an internal enum; the detail view switch lives in `ContentView.swift`.
+
 ### Tabs
 
 | Tab | Purpose |
 |-----|---------|
-| General | Config fields, backend selection, Discord/Calendar setup, notification toggles, advanced tuning, start/stop |
-| Chat | Chat log with bubbles (user right-aligned, assistant left), send as User or Assistant, live updates |
+| General | Working directory, Gemma download (12B / 27B), mmproj path, audio transcription, Discord/Calendar setup, notification toggles, advanced tuning (Context Length, Chat History, Heartbeat, Note Results, Max Notes), start/stop |
+| Chat | Chat log with bubbles (user right-aligned, assistant left), paperclip button to attach an image (greyed out when mmproj isn't loaded), image preview strip, send as User or Assistant, live updates |
 | Notes | List + detail with inline markdown editor, add/delete |
 | Meals | List + detail with editor, type (home/delivery) |
 | Chores | List with color dots, recurrence, mark complete, add/edit/delete |

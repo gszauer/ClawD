@@ -39,4 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Shut down the core before exit so llama.cpp's Metal residency sets
+        // are freed cleanly — prevents a crash in ggml_metal_device_free.
+        CoreBridge.shared.stop()
+    }
 }

@@ -1,5 +1,6 @@
 #include "tool_handlers.h"
 #include "config.h"
+#include "core.h"
 #include "calendar.h"
 #include "data_store.h"
 #include "note_search.h"
@@ -8,6 +9,8 @@
 #include "cJSON.h"
 
 #include <sstream>
+#include <mutex>
+#include <condition_variable>
 #include <iostream>
 #include <ctime>
 #include <algorithm>
@@ -52,50 +55,6 @@ static int day_of_month_from_date(const std::string& date) {
         return tm_buf.tm_mday;
     }
     return 0;
-}
-
-// Get embedding vector for text via HTTP
-static std::vector<float> get_embedding(const Config& config, const std::string& text) {
-    std::vector<float> result;
-    if (config.embedding_url.empty()) return result;
-
-    cJSON* req = cJSON_CreateObject();
-    cJSON_AddStringToObject(req, "model", config.embedding_model.c_str());
-    cJSON_AddStringToObject(req, "input", text.c_str());
-
-    char* json = cJSON_PrintUnformatted(req);
-    std::string body = json;
-    free(json);
-    cJSON_Delete(req);
-
-    HttpResponse resp = http_post(config.embedding_url, body);
-    if (!resp.ok()) {
-        std::cerr << "[Embedding] Request failed (status " << resp.status << "): "
-                  << resp.body.substr(0, 200) << std::endl;
-        return result;
-    }
-
-    cJSON* resp_json = cJSON_Parse(resp.body.c_str());
-    if (!resp_json) return result;
-
-    const cJSON* data = cJSON_GetObjectItemCaseSensitive(resp_json, "data");
-    if (cJSON_IsArray(data) && cJSON_GetArraySize(data) > 0) {
-        const cJSON* first = cJSON_GetArrayItem(data, 0);
-        const cJSON* embedding = cJSON_GetObjectItemCaseSensitive(first, "embedding");
-        if (cJSON_IsArray(embedding)) {
-            int size = cJSON_GetArraySize(embedding);
-            result.reserve(static_cast<size_t>(size));
-            const cJSON* val = nullptr;
-            cJSON_ArrayForEach(val, embedding) {
-                if (cJSON_IsNumber(val)) {
-                    result.push_back(static_cast<float>(val->valuedouble));
-                }
-            }
-        }
-    }
-
-    cJSON_Delete(resp_json);
-    return result;
 }
 
 // --- Reminder Handlers ---
@@ -521,9 +480,9 @@ std::string SaveNoteHandler::execute(const std::vector<std::string>& params) {
     DataItem& item = ctx_->notes->add(title, meta, content);
 
     // Generate embedding and add to search index
-    if (ctx_->note_search && ctx_->config) {
+    if (ctx_->note_search && ctx_->embed_fn) {
         std::string text_to_embed = title + " " + content;
-        auto embedding = get_embedding(*ctx_->config, text_to_embed);
+        auto embedding = ctx_->embed_fn(text_to_embed);
         if (!embedding.empty()) {
             ctx_->note_search->add(item.id, embedding);
             ctx_->note_search->save();
@@ -561,9 +520,9 @@ std::string EditNoteHandler::execute(const std::vector<std::string>& params) {
     ctx_->notes->update(id, meta, body);
 
     // Re-index embedding
-    if (ctx_->note_search && ctx_->config) {
+    if (ctx_->note_search && ctx_->embed_fn) {
         std::string text_to_embed = title + " " + (params.size() > 2 ? params[2] : "");
-        auto embedding = get_embedding(*ctx_->config, text_to_embed);
+        auto embedding = ctx_->embed_fn(text_to_embed);
         if (!embedding.empty()) {
             ctx_->note_search->add(id, embedding);
             ctx_->note_search->save();
@@ -598,7 +557,8 @@ std::string SearchNotesHandler::execute(const std::vector<std::string>& params) 
     }
 
     // Semantic search via embeddings
-    auto embedding = get_embedding(*ctx_->config, params[0]);
+    if (!ctx_->embed_fn) return "Error: embedding backend not available";
+    auto embedding = ctx_->embed_fn(params[0]);
     if (embedding.empty()) return "Error: failed to generate embedding for query";
 
     auto results = ctx_->note_search->search(embedding, 5);
@@ -733,6 +693,122 @@ std::string DeleteCalendarEventHandler::execute(const std::vector<std::string>& 
     if (!ok) return "Error: failed to delete calendar event: " + params[0];
 
     return "Deleted calendar event: " + params[0];
+}
+
+// --- Weather Handler ---
+
+// Synchronous HTTP via platform callbacks (same pattern as calendar.cpp)
+struct WeatherSyncCtx {
+    std::string response;
+    int status = 0;
+    bool done = false;
+    std::mutex mtx;
+    std::condition_variable cv;
+};
+
+static void weather_http_callback(const char* response, int status, void* ctx) {
+    auto* sync = static_cast<WeatherSyncCtx*>(ctx);
+    std::lock_guard<std::mutex> lk(sync->mtx);
+    sync->response = response ? response : "";
+    sync->status = status;
+    sync->done = true;
+    sync->cv.notify_one();
+}
+
+static std::string weather_http_get(PlatformCallbacks* cb, const std::string& url) {
+    if (!cb || !cb->http_request) return "";
+    WeatherSyncCtx ctx;
+    cb->http_request("GET", url.c_str(), "", nullptr, weather_http_callback, &ctx);
+    std::unique_lock<std::mutex> lk(ctx.mtx);
+    ctx.cv.wait(lk, [&] { return ctx.done; });
+    if (ctx.status < 200 || ctx.status >= 300) return "";
+    return ctx.response;
+}
+
+// WMO weather code → human-readable description
+static const char* wmo_description(int code) {
+    switch (code) {
+        case 0:  return "Clear sky";
+        case 1:  return "Mainly clear";
+        case 2:  return "Partly cloudy";
+        case 3:  return "Overcast";
+        case 45: case 48: return "Foggy";
+        case 51: case 53: case 55: return "Drizzle";
+        case 61: case 63: case 65: return "Rain";
+        case 66: case 67: return "Freezing rain";
+        case 71: case 73: case 75: return "Snow";
+        case 77: return "Snow grains";
+        case 80: case 81: case 82: return "Rain showers";
+        case 85: case 86: return "Snow showers";
+        case 95: return "Thunderstorm";
+        case 96: case 99: return "Thunderstorm with hail";
+        default: return "Unknown";
+    }
+}
+
+std::string GetWeatherHandler::execute(const std::vector<std::string>& params) {
+    if (!ctx_ || !ctx_->config || !ctx_->callbacks) return "Error: weather not available";
+    if (!ctx_->config->weather_enabled) return "Error: weather is not enabled";
+    if (ctx_->config->weather_lat == 0.0 && ctx_->config->weather_lon == 0.0)
+        return "Error: weather location not configured (set zip code)";
+
+    std::string date = params.empty() ? "" : params[0];
+    if (date.empty()) {
+        // Default to today
+        time_t now = time(nullptr);
+        struct tm tm_buf;
+        localtime_r(&now, &tm_buf);
+        char buf[16];
+        strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_buf);
+        date = buf;
+    }
+
+    std::ostringstream url;
+    url << "https://api.open-meteo.com/v1/forecast"
+        << "?latitude=" << ctx_->config->weather_lat
+        << "&longitude=" << ctx_->config->weather_lon
+        << "&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode"
+        << "&temperature_unit=fahrenheit"
+        << "&timezone=auto"
+        << "&start_date=" << date
+        << "&end_date=" << date;
+
+    std::string body = weather_http_get(ctx_->callbacks, url.str());
+    if (body.empty()) return "Error: failed to fetch weather data";
+
+    cJSON* root = cJSON_Parse(body.c_str());
+    if (!root) return "Error: failed to parse weather response";
+
+    std::string result;
+    const cJSON* daily = cJSON_GetObjectItemCaseSensitive(root, "daily");
+    if (daily) {
+        const cJSON* temps_max = cJSON_GetObjectItemCaseSensitive(daily, "temperature_2m_max");
+        const cJSON* temps_min = cJSON_GetObjectItemCaseSensitive(daily, "temperature_2m_min");
+        const cJSON* precip = cJSON_GetObjectItemCaseSensitive(daily, "precipitation_sum");
+        const cJSON* codes = cJSON_GetObjectItemCaseSensitive(daily, "weathercode");
+
+        if (cJSON_IsArray(temps_max) && cJSON_GetArraySize(temps_max) > 0) {
+            double hi = cJSON_GetArrayItem(temps_max, 0)->valuedouble;
+            double lo = cJSON_GetArrayItem(temps_min, 0)->valuedouble;
+            double rain = cJSON_IsArray(precip) ? cJSON_GetArrayItem(precip, 0)->valuedouble : 0;
+            int code = cJSON_IsArray(codes) ? cJSON_GetArrayItem(codes, 0)->valueint : -1;
+
+            std::ostringstream ss;
+            ss << "Weather for " << date << ": "
+               << wmo_description(code)
+               << ". High: " << static_cast<int>(hi) << "\u00B0F"
+               << ", Low: " << static_cast<int>(lo) << "\u00B0F";
+            if (rain > 0.1) ss << ", Precipitation: " << rain << " mm";
+            result = ss.str();
+        } else {
+            result = "No weather data available for " + date;
+        }
+    } else {
+        result = "No daily forecast returned for " + date;
+    }
+
+    cJSON_Delete(root);
+    return result;
 }
 
 // --- Registration ---

@@ -49,15 +49,10 @@ bool Config::load(const std::string& path) {
     cJSON* root = cJSON_Parse(data.c_str());
     if (!root) return false;
 
-    backend                      = json_string(root, "backend", "claude");
-    backend_cli_path             = json_string(root, "backend_cli_path");
-    backend_api_url              = json_string(root, "backend_api_url");
-    backend_api_key              = json_string(root, "backend_api_key");
-    backend_api_model            = json_string(root, "backend_api_model");
-    embedding_mode               = json_string(root, "embedding_mode", "API");
-    embedding_url                = json_string(root, "embedding_url");
-    embedding_model              = json_string(root, "embedding_model");
-    embedding_model_path         = json_string(root, "embedding_model_path");
+    gemma_model_path             = json_string(root, "gemma_model_path");
+    gemma_mmproj_path            = json_string(root, "gemma_mmproj_path");
+    gemma_n_ctx                  = json_int(root, "gemma_n_ctx", 0);
+    show_thinking                = json_bool(root, "show_thinking", false);
     audio_backend                = json_string(root, "audio_backend", "off");
     whisper_model_path           = json_string(root, "whisper_model_path");
     assistant_name               = json_string(root, "assistant_name", "ClawD");
@@ -69,6 +64,14 @@ bool Config::load(const std::string& path) {
     calendar_id                  = json_string(root, "calendar_id");
     calendar_sync_interval_minutes = json_int(root, "calendar_sync_interval_minutes", 20);
     working_directory            = json_string(root, "working_directory");
+
+    weather_enabled              = json_bool(root, "weather_enabled", false);
+    weather_zip                  = json_string(root, "weather_zip");
+    weather_lat                  = cJSON_GetObjectItemCaseSensitive(root, "weather_lat") ?
+                                   cJSON_GetObjectItemCaseSensitive(root, "weather_lat")->valuedouble : 0.0;
+    weather_lon                  = cJSON_GetObjectItemCaseSensitive(root, "weather_lon") ?
+                                   cJSON_GetObjectItemCaseSensitive(root, "weather_lon")->valuedouble : 0.0;
+    weather_cached_zip           = json_string(root, "weather_cached_zip");
 
     chat_history_exchanges       = json_int(root, "chat_history_exchanges", 25);
     heartbeat_interval_seconds   = json_int(root, "heartbeat_interval_seconds", 30);

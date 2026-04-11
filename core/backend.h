@@ -5,17 +5,15 @@
 
 struct Config;
 
+// Thin wrapper that forwards assembled prompts to the self-hosted Gemma
+// backend. Kept as a seam so future extensions (streaming, tool use, etc.)
+// have a single hook point instead of threading through every call site.
 class Backend {
 public:
-    // Execute prompt via CLI backend (claude, gemini, codex) using popen()
-    static std::string execute_cli(std::string_view cli_path, std::string_view prompt);
-
-    // Execute prompt via OpenAI-compatible API using HTTP POST
-    static std::string execute_api(std::string_view api_url,
-                                   std::string_view api_key,
-                                   std::string_view model,
-                                   std::string_view prompt);
-
-    // Route to the appropriate executor based on config
-    static std::string execute(const Config& config, std::string_view prompt);
+    // Execute a prompt, optionally with an attached image.
+    // image_path is interpreted by local_gemma: when non-empty and the vision
+    // projector is loaded, the image is encoded and prepended to the text.
+    static std::string execute(const Config& config,
+                               std::string_view prompt,
+                               std::string_view image_path = {});
 };

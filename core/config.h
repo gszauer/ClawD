@@ -10,15 +10,12 @@ struct NotificationConfig {
 };
 
 struct Config {
-    std::string backend = "claude";
-    std::string backend_cli_path = "/Users/user/.local/bin/claude";
-    std::string backend_api_url;
-    std::string backend_api_key;
-    std::string backend_api_model;
-    std::string embedding_mode = "API";     // "API", "local", or "off"
-    std::string embedding_url = "http://localhost:1234/v1/embeddings";
-    std::string embedding_model = "text-embedding-embeddinggemma-300m";
-    std::string embedding_model_path;       // path to GGUF file for local mode
+    // Self-hosted Gemma 4 backend (llama.cpp + mtmd, Metal-accelerated).
+    // Both chat generation and note-search embeddings use this one model.
+    std::string gemma_model_path;           // path to the Gemma LM GGUF
+    std::string gemma_mmproj_path;          // path to the vision projector GGUF (optional)
+    int         gemma_n_ctx = 0;            // context length; 0 = use model's trained max
+    bool        show_thinking = false;      // if true, leave <think>...</think> blocks in responses
     std::string audio_backend = "off";      // "whisper" or "off"
     std::string whisper_model_path;
     std::string assistant_name = "ClawD";
@@ -30,6 +27,13 @@ struct Config {
     std::string calendar_id;              // target calendar (user's email address)
     int calendar_sync_interval_minutes = 20;
     std::string working_directory;
+
+    // Weather (Open-Meteo, no API key needed)
+    bool        weather_enabled = false;
+    std::string weather_zip;             // user's zip code
+    double      weather_lat = 0.0;       // cached latitude from geocoding
+    double      weather_lon = 0.0;       // cached longitude from geocoding
+    std::string weather_cached_zip;      // the zip that lat/lon was derived from
 
     // Tuning
     int chat_history_exchanges = 25;

@@ -174,6 +174,19 @@ public:
     std::string execute(const std::vector<std::string>& params) override;
 };
 
+// --- Weather Tools ---
+
+class GetWeatherHandler : public ToolHandler {
+public:
+    std::string_view name() const override { return "get_weather"; }
+    std::string description() const override {
+        return "get_weather(date: string)\n"
+               "  Get weather forecast for a specific date (YYYY-MM-DD format).\n"
+               "  Returns temperature high/low, precipitation, and conditions.";
+    }
+    std::string execute(const std::vector<std::string>& params) override;
+};
+
 // --- Note Tools ---
 
 class SaveNoteHandler : public ToolHandler {

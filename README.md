@@ -1,17 +1,19 @@
 # ClawD
 
-A native macOS personal assistant that connects to Discord, manages your calendar, meals, chores, reminders, and notes, and routes everything through an AI backend (Claude, Gemini, Codex, or a local LLM). Built as a C++17 core with a SwiftUI frontend.
+A native macOS personal assistant that connects to Discord, manages your calendar, meals, chores, reminders, and notes, and runs a **self-hosted Gemma 4** model (llama.cpp + Metal) for chat, embeddings, and vision — all on-device, no cloud backend. Built as a C++17 core with a SwiftUI frontend.
 
 ![screenshots/combined.png](screenshots/combined.png)
 
 ## What It Does
 
-- **Chat** with an AI assistant via Discord or the local app UI
+- **Fully self-hosted LLM** — Gemma 4 (12B or 27B) running on Metal GPU via llama.cpp. No API keys, no internet required for chat.
+- **Multimodal** — attach an image from the Chat tab's paperclip button; Gemma describes, reasons, or extracts text from it via llama.cpp's mtmd library.
+- **Chat** with the assistant via Discord or the local app UI
 - **Voice messages** — Discord audio messages are transcribed locally via whisper.cpp and processed as text
 - **Reminders** with one-time and recurring schedules (daily, weekly, monthly)
 - **Meals** tracking with home/delivery categories and day-of-month scheduling
 - **Chores** with color-coded categories, recurrence, and completion tracking
-- **Notes** with semantic search powered by embeddings (HNSWLIB)
+- **Notes** with semantic search powered by embeddings from the same Gemma model (HNSWLIB index)
 - **Google Calendar** integration via service account (create, edit, delete, query any date range)
 - **Proactive messages** — daily reports, meal prep reminders, overdue chore alerts, end-of-day summaries
 - **Desktop notifications** for reminders and scheduled reports
@@ -22,8 +24,7 @@ All data is stored as human-readable markdown files with YAML frontmatter. The A
 
 - macOS (built and tested on macOS 26 / Apple Silicon)
 - Xcode (for building the macOS app)
-- One of: Claude CLI, Gemini CLI, Codex CLI, or a local OpenAI-compatible API
-- Optional: LM Studio or similar for embeddings
+- At least ~12 GB of free RAM (12B Gemma) or ~24 GB (27B Gemma)
 - Optional: Discord bot token for Discord integration
 - Optional: Google Cloud service account for calendar sync
 
@@ -48,40 +49,40 @@ make
 
 On first launch, the app creates a `working/` directory next to the `.app` bundle with default settings. The General tab lets you configure:
 
-- **Backend** — select Claude / Gemini / Codex / API and set the CLI path or API URL
-- **Embedding** — API server or local GGUF model for semantic note search
+- **Gemma** — download the 12B (~7 GB) or 27B (~17 GB) model; both also pull the vision projector (mmproj)
 - **Audio** — whisper.cpp for voice message transcription (off by default)
 - **Discord** — bot token and channel ID (numeric, right-click channel > Copy ID)
 - **Calendar** — browse for Google service account JSON, enter your calendar ID
 - **Notifications** — enable/disable and set times for daily report, meal prep, etc.
-- **Advanced** — chat history length, heartbeat interval, note search result count
+- **Advanced** — context length, chat history length, heartbeat interval, note search result count
 
-Click **Start** to initialize the core and connect to Discord.
+Click **Start** to initialize the core, load Gemma, and connect to Discord.
 
-### 3. Set Up AI Backend
+### 3. Download Gemma
 
-The app needs at least one AI backend to generate responses.
+In the **Gemma** card on the General tab, pick a size:
 
-**Claude CLI** (default):
+- **4B (~2.5 GB)** — Gemma 4 4B Q4_K_M. Fits on 8 GB machines (MacBook Air). Fast, but less capable at complex reasoning and tool-calling.
+- **12B (~7 GB)** — Gemma 4 12B Q4_K_M. Comfortable at full 128k context on a 24 GB Mac mini. **Recommended.**
+- **27B (~17 GB)** — Highest quality. Leaves zero memory headroom at 128k; lower **Context Length** in the Advanced section to ~32k if you pick this one.
+
+Each button downloads two files into the working directory:
+1. The LM GGUF
+2. The `mmproj-*.gguf` vision projector (enables image input)
+
+You can also **Browse** to point at your own GGUF files.
+
+Context length is configurable in the Advanced section (`Context Length` stepper, default `0` = model's trained max, which is 128k for Gemma 4). Q8_0 KV cache quantization is always on, which halves the memory needed for the KV cache and is what makes 128k fit on consumer RAM.
+
+#### Rebuilding the llama.cpp libraries
+
+The prebuilt libraries in `deps/lib/` include Metal GPU support and the mtmd multimodal library. To rebuild from source (e.g. to pick up a new llama.cpp release):
+
 ```bash
-# Install via the Claude installer
-# Default path: ~/.local/bin/claude
-# Web search is enabled automatically
+./deps/build_llama.sh
 ```
 
-**Gemini / Codex** (npm):
-```bash
-npm install -g @anthropic-ai/gemini-cli
-npm install -g @openai/codex
-# Default paths: /opt/homebrew/bin/gemini, /opt/homebrew/bin/codex
-```
-
-**Local API** (e.g. LM Studio):
-- Set backend to "API"
-- API URL: `http://localhost:1234/v1/chat/completions`
-- Optional: API key and model name
-
-Use the **Test** button next to the CLI path field to verify the backend is installed.
+This clones llama.cpp at a pinned commit, builds with `GGML_METAL=ON` + `LLAMA_BUILD_TOOLS=ON`, and drops the `.a` files into `deps/lib/` plus refreshed headers into `deps/include/`.
 
 ### 3b. Set Up Audio Transcription (Optional)
 
@@ -113,20 +114,13 @@ When a voice message is received, ClawD adds an ear emoji, transcribes the audio
 
 Without Google credentials, the calendar still works locally — events are stored in `calendar_cache.json` and displayed with an orange "local" badge.
 
-### 6. Set Up Embeddings (Optional)
+### 6. Embeddings
 
-Semantic note search uses an embedding model. Two modes are available:
+Note-search embeddings come from the **same Gemma model** you already downloaded — there's no separate embedding model to configure. ClawD creates a second `llama_context` with `embeddings=true` and mean pooling, sharing the model weights with the generation context.
 
-**API** (default) — any OpenAI-compatible endpoint (e.g. LM Studio):
-1. Install [LM Studio](https://lmstudio.ai/) and load an embedding model
-2. Start the server (default: `http://localhost:1234`)
+If you swap between 12B and 27B, the embedding dimension may change; ClawD detects this on startup via a `.embed_dim` sidecar file and clears the HNSW index automatically. Re-index from the Notes tab after switching.
 
-**Local** — runs the model in-process via llama.cpp:
-1. Set Embedding to **local**
-2. Click **Download** to fetch nomic-embed-text-v1.5, or **Browse** for your own GGUF
-3. Reindex notes from the Notes tab
-
-Without embeddings, notes still work — search falls back to title matching.
+If Gemma isn't loaded, note search falls back to title substring matching.
 
 ## Project Structure
 
@@ -149,21 +143,22 @@ Assistant/
 | Tool System | `tool_parser.h/cpp`, `tool_handler.h/cpp`, `tool_handlers.h/cpp` | 23 tool handlers with `<<TOOL:...>>` parsing |
 | Prompt Assembly | `prompt_assembler.h/cpp` | Builds multi-part prompts from templates + context |
 | Note Search | `note_search.h/cpp` | HNSWLIB semantic search with embedding API |
-| Local Embed | `local_embed.h/cpp` | llama.cpp local embedding inference |
+| Local Gemma | `local_gemma.h/cpp` | Self-hosted Gemma 4: llama.cpp model + mtmd vision context + separate generation/embedding llama_contexts |
 | Whisper | `whisper_transcribe.h/cpp` | whisper.cpp audio transcription |
 | Calendar | `calendar.h/cpp` | Google Calendar API, sync tokens, local fallback |
-| Backend | `backend.h/cpp` | CLI (`popen`) and API (HTTP POST) execution |
+| Backend | `backend.h/cpp` | Thin wrapper forwarding prompts to `local_gemma_generate` |
 | Task Queue | `task_queue.h/cpp` | Priority queue for scheduled tasks |
 | HTTP Client | `http_client.h/cpp` | POSIX socket HTTP for Phase 1 |
-| Core API | `core.h/cpp` | C-compatible interface, global state, message routing |
+| Core API | `core.h/cpp` | C-compatible interface, global state, message routing (text & image paths) |
 | Dependencies | `cJSON.c/h`, `hnswlib/` | JSON parsing, nearest neighbor search |
-| Pre-built Libs | `deps/lib/`, `deps/include/` | llama.cpp + whisper.cpp static libraries |
+| Pre-built Libs | `deps/lib/`, `deps/include/` | llama.cpp (with Metal + mtmd) and whisper.cpp static libraries |
+| Rebuild Script | `deps/build_llama.sh` | Reproducible llama.cpp rebuild at a pinned commit |
 
 ### Swift Layer
 
 | Component | Files | Purpose |
 |-----------|-------|---------|
-| App | `clawdApp.swift`, `ContentView.swift` | Entry point, 7-tab layout, toast overlay |
+| App | `clawdApp.swift`, `ContentView.swift` | Entry point, `NavigationSplitView` sidebar (7 sections), toast overlay |
 | State | `AppState.swift` | `@Observable` singleton, config I/O, data refresh |
 | Bridge | `CoreBridge.swift`, `clawd-Bridging-Header.h` | C++ core wrapper, platform callbacks |
 | Discord | `DiscordService.swift` | WebSocket gateway, heartbeat, REST API |
@@ -198,10 +193,11 @@ The AI can invoke these tools by including `<<TOOL:name(params)>>` in its respon
 ### Chores
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `add_chore` | name, color, recurrence, day | Add a chore. Colors: green/blue/pink |
-| `edit_chore` | id, name, color, recurrence, day | Edit a chore |
+| `add_chore` | name, color, recurrence, day, details | Add a chore. Colors: green/blue/pink. `details` is optional markdown body. |
+| `edit_chore` | id, name, color, recurrence, day, details | Edit a chore. `details` replaces the markdown body. |
 | `complete_chore` | id | Mark done (one-shot chores are deleted) |
 | `list_chores` | date | List chores for a date |
+| `get_chore_details` | id | Get full markdown body (steps, notes) for a chore |
 | `delete_chore` | id | Delete a chore |
 
 ### Notes
@@ -245,9 +241,10 @@ The app is designed to run with missing components:
 
 | Missing | What happens |
 |---------|-------------|
-| AI backend | Chat shows error messages, tools still work from UI |
+| Gemma model | Chat returns `[Error: Gemma is not loaded]`; tools still work from the UI. Download or browse to a GGUF in the Gemma card. |
+| Vision projector (mmproj) | Chat tab's paperclip button greys out; text-only chat still works. |
+| 27B at full context OOM | Generation context creation retries at half n_ctx, then surfaces an error if it still fails. |
 | Discord | Local chat UI works, proactive messages go to chat log + desktop notifications |
-| Embedding server | Note search falls back to title matching, no auto-injection in prompt |
 | Whisper model | Voice messages are downloaded but not transcribed |
 | Google Calendar | Calendar tools use local-only storage, events show orange badge |
 | Config file | Default settings used, config created on first save |
@@ -283,7 +280,10 @@ The Xcode project is configured with:
 
 ## TODO
 
-- Image input: take image files sent on discord, convert them, store in tmp directory, and let the LLM read the file.
+- Discord image attachments: use the same mtmd path that the local Chat tab already uses, but fed from a downloaded Discord attachment.
+- Drag-and-drop and paste-from-clipboard for images in the Chat tab (currently Browse only).
+- Multi-image messages.
+- Token streaming to the Chat UI (currently synchronous/blocking).
 
 ## License
 

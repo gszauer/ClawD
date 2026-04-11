@@ -16,79 +16,47 @@ The app creates the `working/` directory and all subdirectories automatically on
 
 ---
 
-## 2. Backend (Required)
+## 2. Gemma (Required)
 
-ClawD needs an AI backend to generate responses. Pick one:
+ClawD runs a self-hosted **Gemma 4** model for both chat generation and note-search embeddings. There is no cloud backend — everything happens locally on your Mac via llama.cpp with Metal GPU acceleration.
 
-### Claude CLI (Recommended)
+The prebuilt llama.cpp static libraries in `deps/lib/` are already Metal-enabled and include the multimodal (`libmtmd.a`) support needed for Gemma's vision capabilities. If you ever need to rebuild them (e.g. to pick up a new llama.cpp release), run `./deps/build_llama.sh` — the script clones llama.cpp at a pinned commit, builds with `GGML_METAL=ON` + `LLAMA_BUILD_TOOLS=ON`, and drops the resulting `.a` files into `deps/lib/` plus headers into `deps/include/`.
 
-1. Install Claude Code from [claude.ai/download](https://claude.ai/download)
-2. Run `claude` once in your terminal to complete authentication
-3. In ClawD, select **claude** in the Backend picker
-4. The CLI path auto-fills to `/Users/user/.local/bin/claude`
-5. Click **Test** to verify the binary exists
+### Download the model
 
-Claude is invoked with `--allowedTools WebSearch` so the AI can search the web.
+In the **Gemma** card on the General tab:
 
-### Gemini CLI
+- **4B (~2.5 GB)** — Gemma 4 4B Q4_K_M + vision projector. Fits easily on 8 GB machines (e.g. MacBook Air). Fast, but less capable at complex reasoning and tool-calling.
+- **12B (~7 GB)** — Gemma 4 12B Q4_K_M + vision projector. Comfortable on 24 GB Apple Silicon at the full 128k context window. **Recommended** for a Mac mini 24 GB.
+- **27B (~17 GB)** — Gemma 4 27B Q4_K_M + vision projector. Highest quality but leaves zero headroom at 128k context. If you pick 27B, also drop **Context Length** in the Advanced section to something lower like `32768` or you risk OOM when other apps run.
 
-1. Install via npm: `npm install -g @google/gemini-cli`
-2. Run `gemini` once in your terminal to authenticate
-3. Select **gemini** — path auto-fills to `/opt/homebrew/bin/gemini`
-4. Click **Test** to verify
+Each button downloads two files sequentially into the working directory:
+1. The language model GGUF (the big file)
+2. The vision projector (`mmproj-*.gguf`, ~1 GB) — enables image input in the Chat tab
 
-### Codex CLI
+Both paths are populated in the Gemma card once the download finishes. You can also **Browse...** to point at your own GGUF files.
 
-1. Install via npm: `npm install -g @openai/codex`
-2. Run `codex` once to authenticate
-3. Select **codex** — path auto-fills to `/opt/homebrew/bin/codex`
-4. Click **Test** to verify
+### Context length
 
-### Local API (LM Studio, Ollama, etc.)
+By default `Context Length` is `0` which means "use the model's maximum trained context" — 128k for Gemma 4. The app uses Q8_0 KV cache quantization to make this fit in RAM: ~11 GB for 12B, ~23 GB for 27B. Lower it in the Advanced section if you need to free RAM for other apps.
 
-1. Select **local**
-2. Enter the API URL (e.g. `http://localhost:1234/v1/chat/completions`)
-3. Enter the model name
-4. Enter an API key if required (optional for local servers)
+Changing the context length requires a restart (click **Stop** then **Start**).
 
----
+### Vision / image input
 
-## 3. Embeddings (Optional)
+When the vision projector is loaded, the **Chat** tab shows a paperclip button next to the text field. Click it to attach a JPEG/PNG file to your next message. The image is processed alongside the text using mtmd (multimodal tokens), and Gemma can describe or reason about it.
 
-Semantic note search uses an embedding model to find relevant notes automatically. Without this, note search falls back to simple title matching.
+The paperclip is greyed out if the vision projector isn't loaded. Discord image attachments are not yet supported — only the local Chat tab can send images.
 
-ClawD supports two embedding modes, selectable in the **Backend** section:
+### Note-search embeddings
 
-### API (default) — LM Studio or any OpenAI-compatible endpoint
+Semantic note search uses the same Gemma model via a second llama.cpp context (mean-pooled, text-only). There's no separate embedding model to download. Embedding quality is good enough for personal note volumes, though purpose-built embedders would be more accurate for very large collections.
 
-1. Download [LM Studio](https://lmstudio.ai/)
-2. Search for and download an embedding model (e.g. `embeddinggemma-300m`)
-3. Go to the **Developer** tab in LM Studio
-4. Load the embedding model (make sure it's listed under **Loaded Models**)
-5. Start the server (default port 1234)
-
-Configuration:
-- **Embedding URL**: `http://localhost:1234/v1/embeddings` (default)
-- **Embedding Model**: `text-embedding-embeddinggemma-300m` (default)
-
-The app checks the embedding server on startup and shows a toast if it's unreachable.
-
-### Local — llama.cpp with a GGUF model
-
-Runs the embedding model directly in the app using llama.cpp. No external server needed.
-
-The llama.cpp static libraries are included in `deps/` — no extra setup required.
-
-1. Set the Embedding toggle to **local**
-2. Click **Download** to fetch nomic-embed-text-v1.5 (262 MB) into the working directory, or **Browse** to select your own GGUF file
-3. Click **Save Config**, then **Start** (or restart)
-4. Go to the **Notes** tab and click the reindex button to re-embed notes with the local model
-
-You can switch between API and local freely. After switching, reindex your notes so the embeddings are consistent.
+If you ever swap between 12B and 27B, the embedding dimension may change; ClawD detects this on startup and clears the HNSW index automatically. Re-index from the **Notes** tab after switching.
 
 ---
 
-## 3b. Audio Transcription (Optional)
+## 3. Audio Transcription (Optional)
 
 Discord voice messages can be transcribed locally using whisper.cpp. The whisper.cpp static library is included in `deps/` — no extra setup required.
 
@@ -300,7 +268,7 @@ Edit these with any text editor. The defaults are created on first start. If you
 - Click **Start** to initialize the core, connect Discord, and begin the heartbeat
 - Click **Stop** to disconnect everything cleanly
 
-Settings that require a restart to take effect: backend selection, working directory, heartbeat interval, embedding model.
+Settings that require a restart to take effect: Gemma model path, mmproj path, context length, working directory, heartbeat interval.
 
 ---
 
@@ -312,7 +280,8 @@ Settings that require a restart to take effect: backend selection, working direc
 | Chat bubbles don't appear | Check that `chatLog.count` is non-zero in the console |
 | Discord won't connect | Enable Message Content Intent in the Developer Portal |
 | Calendar sync returns 0 events | Enter your Calendar ID (not "primary") and share the calendar with the service account |
-| Embedding errors | Make sure the embedding model is loaded in LM Studio, not just downloaded |
+| Gemma fails to load | Check the Xcode console for `[Gemma]` log lines. Verify the model path points at a real GGUF file. On 27B, try lowering Context Length. |
+| `[Error: Gemma is not loaded]` in chat | Set the model path in the Gemma card, Save Config, then Stop/Start. |
+| Attach-image button greyed out | The vision projector (mmproj) isn't loaded. Re-run the download or browse to the `mmproj-*.gguf` file. |
 | Reminders don't fire | Check the console for `[Reminder]` log lines — verify the delay is positive |
-| Backend errors in chat | Check that the CLI binary exists (use the **Test** button) |
 | Permission popups on every build | The `.app` is rebuilt with a new signature each time — this is normal during development |

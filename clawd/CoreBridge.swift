@@ -52,6 +52,14 @@ final class CoreBridge: @unchecked Sendable {
 
         isRunning = true
 
+        // Verify Gemma loaded. If it failed (bad file, missing, OOM), stop
+        // immediately — there's no point running without an LLM.
+        if core_is_gemma_loaded() == 0 {
+            AppState.shared.showToast("Gemma failed to load — check the model file or Xcode console for details.", isError: true)
+            stop()
+            return
+        }
+
         // Load service account credentials from working/calendar.json if present
         let saPath = "\(AppState.shared.workingDirectory)/calendar.json"
         if FileManager.default.fileExists(atPath: saPath) && CalendarAuth.shared.load(from: saPath) {
@@ -114,6 +122,19 @@ final class CoreBridge: @unchecked Sendable {
     func sendMessage(user: String, text: String, channelId: String = "", messageId: String = "") {
         guard isRunning else { return }
         core_on_message_received(user, text, channelId, messageId)
+    }
+
+    /// Send a local chat message with an optional attached image. Only used
+    /// by the Chat tab — Discord and scheduled messages never pass images.
+    func sendMessageWithImage(user: String, text: String, imagePath: String) {
+        guard isRunning else { return }
+        core_send_message_with_image(user, text, imagePath)
+    }
+
+    /// True if a vision projector is loaded and ready to accept images.
+    var hasVision: Bool {
+        guard isRunning else { return false }
+        return core_has_vision() != 0
     }
 
     /// Append a message as the assistant (no AI call) and log to chat history.

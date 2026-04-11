@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <string_view>
 #include <memory>
@@ -8,6 +9,7 @@
 
 // Forward declarations for core context
 struct Config;
+struct PlatformCallbacks;
 class DataStore;
 class ChatHistory;
 class NoteSearch;
@@ -16,6 +18,7 @@ class CalendarManager;
 
 struct CoreContext {
     Config* config = nullptr;
+    PlatformCallbacks* callbacks = nullptr;
     DataStore* meals = nullptr;
     DataStore* chores = nullptr;
     DataStore* reminders = nullptr;
@@ -23,6 +26,11 @@ struct CoreContext {
     NoteSearch* note_search = nullptr;
     TaskQueue* task_queue = nullptr;
     CalendarManager* calendar = nullptr;
+    // Injected at init time by core.cpp — returns an embedding vector for the
+    // given text. Tool handlers that need embeddings (save_note, search_notes,
+    // edit_note) call through this function pointer so they don't depend on
+    // the specific embedding backend.
+    std::function<std::vector<float>(const std::string&)> embed_fn;
 };
 
 class ToolHandler {

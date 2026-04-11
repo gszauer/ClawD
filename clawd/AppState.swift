@@ -21,19 +21,54 @@ final class AppState {
     // Editing state — blocks tab switching and other actions
     var isEditing = false
 
-    // Non-blocking error/status toast
+    // Non-blocking error/status toast with simple queue so rapid toasts
+    // don't silently overwrite each other.
     var toastMessage: String = ""
     var toastIsError: Bool = false
     private var toastTimer: Timer?
+    private var toastQueue: [(message: String, isError: Bool)] = []
+
+    // Error log — populated whenever showToast is called with isError = true.
+    // Persists in memory for the session so users can review what went wrong
+    // after the toast has disappeared.
+    struct LoggedError: Identifiable {
+        let id = UUID()
+        let timestamp: Date
+        let message: String
+    }
+    var errorLog: [LoggedError] = []
 
     func showToast(_ message: String, isError: Bool = false) {
         print("[Toast] \(isError ? "ERROR: " : "")\(message)")
         DispatchQueue.main.async {
-            self.toastMessage = message
-            self.toastIsError = isError
-            self.toastTimer?.invalidate()
-            self.toastTimer = Timer.scheduledTimer(withTimeInterval: isError ? 10 : 7, repeats: false) { _ in
-                self.toastMessage = ""
+            if isError {
+                self.errorLog.append(LoggedError(timestamp: Date(), message: message))
+                // Cap to prevent unbounded growth in long sessions.
+                if self.errorLog.count > 500 {
+                    self.errorLog.removeFirst(self.errorLog.count - 500)
+                }
+            }
+            if self.toastMessage.isEmpty {
+                self.presentToast(message, isError: isError)
+            } else {
+                self.toastQueue.append((message, isError))
+            }
+        }
+    }
+
+    private func presentToast(_ message: String, isError: Bool) {
+        toastMessage = message
+        toastIsError = isError
+        toastTimer?.invalidate()
+        toastTimer = Timer.scheduledTimer(withTimeInterval: isError ? 10 : 4, repeats: false) { _ in
+            self.toastMessage = ""
+            // Show next queued toast after a brief pause so the user sees
+            // the transition.
+            if !self.toastQueue.isEmpty {
+                let next = self.toastQueue.removeFirst()
+                Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
+                    self.presentToast(next.message, isError: next.isError)
+                }
             }
         }
     }
@@ -48,15 +83,10 @@ final class AppState {
     }()
 
     // Config fields
-    var backend: String = "claude"
-    var backendCliPath: String = "/Users/user/.local/bin/claude"
-    var backendApiUrl: String = ""
-    var backendApiKey: String = ""
-    var backendApiModel: String = ""
-    var embeddingMode: String = "API"
-    var embeddingUrl: String = "http://localhost:1234/v1/embeddings"
-    var embeddingModel: String = "text-embedding-embeddinggemma-300m"
-    var embeddingModelPath: String = ""
+    var gemmaModelPath: String = ""
+    var gemmaMmprojPath: String = ""
+    var gemmaNCtx: Int = 0           // 0 = use model's trained maximum
+    var showThinking: Bool = false   // leave <think>...</think> blocks in responses
     var audioBackend: String = "off"
     var whisperModelPath: String = ""
     var assistantName: String = "ClawD"
@@ -72,6 +102,10 @@ final class AppState {
     var noteSearchResults: Int = 5
     var maxNotesInIndex: Int = 10000
 
+    // Weather
+    var weatherEnabled: Bool = false
+    var weatherZip: String = ""
+
     // Notification toggles
     var dailyReportEnabled: Bool = false
     var dailyReportTime: Date = AppState.timeFromHHMM("07:00")
@@ -83,6 +117,10 @@ final class AppState {
     var overdueChoresTime: Date = AppState.timeFromHHMM("10:00")
     var endOfDayEnabled: Bool = false
     var endOfDayTime: Date = AppState.timeFromHHMM("21:00")
+
+    // Available model files (scanned from working/models/)
+    var availableGemmaModels: [String] = []
+    var availableWhisperModels: [String] = []
 
     // Data arrays for UI
     var meals: [[String: Any]] = []
@@ -101,21 +139,18 @@ final class AppState {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
 
-        let validBackends = Set(["claude", "gemini", "codex", "API"])
-        let validEmbedding = Set(["API", "local", "off"])
         let validAudio = Set(["whisper", "off"])
 
-        backend = validBackends.contains(json["backend"] as? String ?? "") ? json["backend"] as! String : "claude"
-        backendCliPath = json["backend_cli_path"] as? String ?? ""
-        backendApiUrl = json["backend_api_url"] as? String ?? ""
-        backendApiKey = json["backend_api_key"] as? String ?? ""
-        backendApiModel = json["backend_api_model"] as? String ?? ""
-        embeddingMode = validEmbedding.contains(json["embedding_mode"] as? String ?? "") ? json["embedding_mode"] as! String : "API"
-        embeddingUrl = json["embedding_url"] as? String ?? ""
-        embeddingModel = json["embedding_model"] as? String ?? ""
-        embeddingModelPath = json["embedding_model_path"] as? String ?? ""
+        gemmaModelPath = json["gemma_model_path"] as? String ?? ""
+        gemmaMmprojPath = json["gemma_mmproj_path"] as? String ?? ""
+        gemmaNCtx = json["gemma_n_ctx"] as? Int ?? 0
+        showThinking = json["show_thinking"] as? Bool ?? false
         audioBackend = validAudio.contains(json["audio_backend"] as? String ?? "") ? json["audio_backend"] as! String : "off"
         whisperModelPath = json["whisper_model_path"] as? String ?? ""
+        weatherEnabled = json["weather_enabled"] as? Bool ?? false
+        weatherZip = json["weather_zip"] as? String ?? ""
+
+        scanAvailableModels()
         assistantName = json["assistant_name"] as? String ?? "ClawD"
         assistantEmoji = json["assistant_emoji"] as? String ?? "🦀"
         discordBotToken = json["discord_bot_token"] as? String ?? ""
@@ -154,16 +189,13 @@ final class AppState {
 
     func saveConfig() {
         let json: [String: Any] = [
-            "backend": backend,
-            "backend_cli_path": backendCliPath,
-            "backend_api_url": backendApiUrl,
-            "backend_api_key": backendApiKey,
-            "backend_api_model": backendApiModel,
-            "embedding_mode": embeddingMode,
-            "embedding_url": embeddingUrl,
-            "embedding_model": embeddingModel,
-            "embedding_model_path": embeddingModelPath,
+            "gemma_model_path": gemmaModelPath,
+            "gemma_mmproj_path": gemmaMmprojPath,
+            "gemma_n_ctx": gemmaNCtx,
+            "show_thinking": showThinking,
             "audio_backend": audioBackend,
+            "weather_enabled": weatherEnabled,
+            "weather_zip": weatherZip,
             "whisper_model_path": whisperModelPath,
             "assistant_name": assistantName,
             "assistant_emoji": assistantEmoji,
@@ -207,6 +239,30 @@ final class AppState {
         // Notify core of config change
         if CoreBridge.shared.isRunning {
             CoreBridge.shared.reloadConfig()
+        }
+    }
+
+    func scanAvailableModels() {
+        let wd = workingDirectory.isEmpty ? AppState.defaultWorkingDirectory : workingDirectory
+        let modelsDir = "\(wd)/models"
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: modelsDir)) ?? []
+
+        availableGemmaModels = contents
+            .filter { $0.hasSuffix(".gguf") && !$0.contains("mmproj") }
+            .sorted()
+
+        availableWhisperModels = contents
+            .filter { $0.hasPrefix("whisper-") && $0.hasSuffix(".bin") }
+            .sorted()
+
+        // Clear selections that point at files no longer on disk.
+        if !gemmaModelPath.isEmpty && !availableGemmaModels.contains(gemmaModelPath) {
+            gemmaModelPath = ""
+            gemmaMmprojPath = ""
+        }
+        if !whisperModelPath.isEmpty && !availableWhisperModels.contains(whisperModelPath) {
+            whisperModelPath = ""
+            audioBackend = "off"
         }
     }
 

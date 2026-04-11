@@ -5,25 +5,15 @@ struct GeneralTab: View {
     @Bindable private var state = AppState.shared
     @Bindable private var core = CoreBridge.shared
     @Bindable private var discord = DiscordService.shared
-    @State private var statusMessage = ""
-    @State private var isDownloadingModel = false
+    @State private var isDownloadingGemma = false
+    @State private var gemmaDownloadLabel = ""
     @State private var isDownloadingWhisper = false
     @State private var whisperDownloadLabel = ""
     @State private var showAdvanced = false
 
-    private let backends = ["claude", "gemini", "codex", "API"]
-    private let embeddingModes = ["API", "local", "off"]
-    private let audioBackends = ["whisper", "off"]
-
     private var calendarJsonExists: Bool {
         FileManager.default.fileExists(atPath: "\(state.workingDirectory)/calendar.json")
     }
-
-    private static let defaultPaths: [String: String] = [
-        "claude": "/Users/user/.local/bin/claude",
-        "gemini": "/opt/homebrew/bin/gemini",
-        "codex": "/opt/homebrew/bin/codex",
-    ]
 
     var body: some View {
         ScrollView {
@@ -38,66 +28,69 @@ struct GeneralTab: View {
                              trailing: { Button("Browse...") { browseDirectory() }.buttonStyle(.bordered).controlSize(.small) })
                 }
 
-                // ── AI & Models ──
-                card("AI & Models") {
-                    // Picker row
-                    HStack(spacing: 16) {
-                        pickerGroup("Backend", selection: $state.backend, options: backends, maxWidth: 280)
-                            .onChange(of: state.backend) { _, newValue in
-                                if let path = Self.defaultPaths[newValue] {
-                                    state.backendCliPath = path
+                // ── Two-column: Gemma + Audio ──
+                HStack(alignment: .top, spacing: 16) {
+                    card("Gemma") {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Model").font(.caption).foregroundStyle(.secondary)
+                            Picker("", selection: $state.gemmaModelPath) {
+                                Text("None").tag("")
+                                ForEach(state.availableGemmaModels, id: \.self) { file in
+                                    Text(gemmaDisplayName(file)).tag(file)
                                 }
                             }
-                        Spacer()
-                        pickerGroup("Embedding", selection: $state.embeddingMode, options: embeddingModes, maxWidth: 150)
-                        Spacer()
-                        pickerGroup("Audio", selection: $state.audioBackend, options: audioBackends, maxWidth: 130)
-                    }
-
-                    Divider().padding(.vertical, 4)
-
-                    // Backend config
-                    if state.backend == "API" {
-                        fieldRow("API URL", text: $state.backendApiUrl, placeholder: "http://localhost:1234/v1/chat/completions")
-                        fieldRow("API Key", secure: true, text: $state.backendApiKey, placeholder: "sk-...")
-                        fieldRow("Model", text: $state.backendApiModel, placeholder: "model name")
-                    } else {
-                        HStack {
-                            fieldRow("CLI Path", text: $state.backendCliPath, placeholder: "/usr/local/bin/claude")
-                            Button("Test") { testBackendCli() }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
+                            .labelsHidden()
+                            .onChange(of: state.gemmaModelPath) { _, newVal in
+                                state.gemmaMmprojPath = matchingMmproj(for: newVal)
+                            }
                         }
-                    }
-
-                    // Embedding config
-                    if state.embeddingMode == "API" {
-                        fieldRow("Embedding URL", text: $state.embeddingUrl, placeholder: "http://localhost:1234/v1/embeddings")
-                        fieldRow("Embedding Model", text: $state.embeddingModel, placeholder: "text-embedding-nomic-embed-text-v1.5")
-                    } else if state.embeddingMode == "local" {
-                        modelRow("Embedding Model", path: $state.embeddingModelPath, placeholder: "Path to .gguf file",
-                                 browse: browseGgufModel) {
-                            Button("Download") { downloadEmbeddingModel() }
+                        HStack(spacing: 6) {
+                            Text("Download:").font(.caption).foregroundStyle(.secondary)
+                            Button("2B") { downloadGemma(size: "e2b") }
                                 .buttonStyle(.bordered).controlSize(.small)
-                                .disabled(isDownloadingModel)
+                                .disabled(isDownloadingGemma || state.availableGemmaModels.contains("gemma-4-E2B-it-Q4_K_M.gguf"))
+                            Button("4B") { downloadGemma(size: "e4b") }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(isDownloadingGemma || state.availableGemmaModels.contains("gemma-4-E4B-it-Q4_K_M.gguf"))
+                            Button("26B") { downloadGemma(size: "26b-a4b") }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(isDownloadingGemma || state.availableGemmaModels.contains("gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"))
+                            Button("Q3.5 9B") { downloadGemma(size: "qwen-9b") }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(isDownloadingGemma || state.availableGemmaModels.contains("Qwen3.5-9B-Q4_K_M.gguf"))
                         }
-                        downloadProgress(isDownloadingModel, "Downloading nomic-embed-text-v1.5.f16.gguf (262 MB)...")
+                        downloadProgress(isDownloadingGemma, gemmaDownloadLabel)
                     }
+                    .frame(maxHeight: .infinity)
 
-                    // Whisper config
-                    if state.audioBackend == "whisper" {
-                        modelRow("Whisper Model", path: $state.whisperModelPath, placeholder: "Path to whisper model",
-                                 browse: browseWhisperModel) {
+                    card("Whisper") {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Whisper Model").font(.caption).foregroundStyle(.secondary)
+                            Picker("", selection: whisperBinding) {
+                                Text("Off").tag("")
+                                ForEach(state.availableWhisperModels, id: \.self) { file in
+                                    Text(whisperDisplayName(file)).tag(file)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                        HStack(spacing: 6) {
+                            Text("Download:").font(.caption).foregroundStyle(.secondary)
                             Button("Base") { downloadWhisperModel(size: "base") }
                                 .buttonStyle(.bordered).controlSize(.small)
-                                .disabled(isDownloadingWhisper)
+                                .disabled(isDownloadingWhisper || state.availableWhisperModels.contains("whisper-ggml-base.en.bin"))
                             Button("Small") { downloadWhisperModel(size: "small") }
                                 .buttonStyle(.bordered).controlSize(.small)
-                                .disabled(isDownloadingWhisper)
+                                .disabled(isDownloadingWhisper || state.availableWhisperModels.contains("whisper-ggml-small.en.bin"))
+                            Button("Medium") { downloadWhisperModel(size: "medium") }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(isDownloadingWhisper || state.availableWhisperModels.contains("whisper-ggml-medium.en.bin"))
                         }
                         downloadProgress(isDownloadingWhisper, whisperDownloadLabel)
                     }
+                    .frame(maxHeight: .infinity)
                 }
+                .fixedSize(horizontal: false, vertical: true)
 
                 // ── Two-column: Discord + Calendar ──
                 HStack(alignment: .top, spacing: 16) {
@@ -123,6 +116,7 @@ struct GeneralTab: View {
                             }
                         }
                     }
+                    .frame(maxHeight: .infinity)
 
                     // Calendar
                     card("Calendar") {
@@ -152,7 +146,9 @@ struct GeneralTab: View {
                                 .font(.caption)
                         }
                     }
+                    .frame(maxHeight: .infinity)
                 }
+                .fixedSize(horizontal: false, vertical: true)
 
                 // ── Notifications ──
                 card("Notifications") {
@@ -163,6 +159,7 @@ struct GeneralTab: View {
                         notifCard("End of Day", icon: "moon.stars", enabled: $state.endOfDayEnabled, time: $state.endOfDayTime)
                         notifCardStepper("Calendar", icon: "calendar.badge.clock", enabled: $state.calendarHeadsUpEnabled,
                                          value: $state.calendarHeadsUpMinutes, range: 5...120, step: 5, unit: "min")
+                        weatherCard
                     }
                 }
 
@@ -186,10 +183,20 @@ struct GeneralTab: View {
 
                     if showAdvanced {
                         VStack(spacing: 8) {
+                            stepperRow("Context Length",
+                                       value: $state.gemmaNCtx,
+                                       range: 0...131072,
+                                       step: 4096,
+                                       unit: state.gemmaNCtx == 0 ? "(model max)" : "tokens")
                             stepperRow("Chat History", value: $state.chatHistoryExchanges, range: 5...100, step: 5, unit: "exchanges")
                             stepperRow("Heartbeat", value: $state.heartbeatIntervalSeconds, range: 10...120, step: 5, unit: "seconds")
                             stepperRow("Note Results", value: $state.noteSearchResults, range: 1...20, step: 1, unit: "results")
                             stepperRow("Max Notes", value: $state.maxNotesInIndex, range: 1000...100000, step: 1000, unit: "")
+                            HStack {
+                                Toggle("Show Thinking", isOn: $state.showThinking)
+                                    .font(.callout)
+                                Spacer()
+                            }
                         }
                         .padding(16)
                         .background(Color(.controlBackgroundColor).opacity(0.5))
@@ -198,21 +205,65 @@ struct GeneralTab: View {
                     }
                 }
 
-                // ── Save ──
-                HStack {
-                    Spacer()
-                    Button {
-                        state.saveConfig()
-                        statusMessage = "Config saved."
-                    } label: {
-                        Label("Save Config", systemImage: "square.and.arrow.down")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                }
+
             }
             .padding(20)
         }
+        .onAppear { state.scanAvailableModels() }
+        .onChange(of: state.workingDirectory) { state.scanAvailableModels() }
+    }
+
+    // MARK: - Model Scanning
+
+    /// The subdirectory inside the working directory where all model files live.
+    private var modelsDirectory: String {
+        let wd = state.workingDirectory.isEmpty ? AppState.defaultWorkingDirectory : state.workingDirectory
+        return "\(wd)/models"
+    }
+
+    private func gemmaDisplayName(_ filename: String) -> String {
+        // "gemma-4-12b-it-Q4_K_M.gguf" → "Gemma 4 12B (Q4_K_M)"
+        var s = filename.replacingOccurrences(of: ".gguf", with: "")
+        s = s.replacingOccurrences(of: "-", with: " ")
+        return s
+    }
+
+    private func whisperDisplayName(_ filename: String) -> String {
+        if filename.contains("medium") { return "Whisper Medium (EN)" }
+        if filename.contains("small")  { return "Whisper Small (EN)" }
+        if filename.contains("base")   { return "Whisper Base (EN)" }
+        return filename
+    }
+
+    /// Known LM → mmproj pairings. We control the filenames via the download
+    /// buttons, so this is just a simple lookup table.
+    private static let mmprojForModel: [String: String] = [
+        "gemma-4-E2B-it-Q4_K_M.gguf":        "mmproj-E2B-F16.gguf",
+        "gemma-4-E4B-it-Q4_K_M.gguf":        "mmproj-E4B-F16.gguf",
+        "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf": "mmproj-26B-A4B-F16.gguf",
+        "Qwen3.5-9B-Q4_K_M.gguf":             "mmproj-Qwen3.5-9B-F16.gguf",
+    ]
+
+    private func matchingMmproj(for lmFile: String) -> String {
+        Self.mmprojForModel[lmFile] ?? ""
+    }
+
+    /// Binding that maps whisper model selection ↔ audioBackend + whisperModelPath.
+    private var whisperBinding: Binding<String> {
+        Binding(
+            get: {
+                state.audioBackend == "whisper" ? state.whisperModelPath : ""
+            },
+            set: { newVal in
+                if newVal.isEmpty {
+                    state.audioBackend = "off"
+                    state.whisperModelPath = ""
+                } else {
+                    state.audioBackend = "whisper"
+                    state.whisperModelPath = newVal
+                }
+            }
+        )
     }
 
     // MARK: - Status Banner
@@ -229,28 +280,19 @@ struct GeneralTab: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(core.isRunning ? "Running" : "Stopped")
-                    .font(.title3).fontWeight(.semibold)
-                HStack(spacing: 12) {
-                    statusPill("Core", active: core.isRunning)
-                    statusPill("Discord", active: discord.isConnected)
-                    statusPill(state.backend, active: core.isRunning, color: .blue)
-                    if state.embeddingMode != "off" {
-                        statusPill("Embedding", active: core.isRunning, color: .purple)
-                    }
-                    if state.audioBackend != "off" {
-                        statusPill("Whisper", active: core.isRunning, color: .orange)
-                    }
-                }
-            }
+            Text(core.isRunning ? "Running" : "Stopped")
+                .font(.title3).fontWeight(.semibold)
 
             Spacer()
 
-            if !statusMessage.isEmpty {
-                Text(statusMessage)
-                    .font(.caption).foregroundStyle(.secondary)
+            Button {
+                state.saveConfig()
+                AppState.shared.showToast("Config saved")
+            } label: {
+                Label("Save Config", systemImage: "square.and.arrow.down")
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
         }
         .padding(16)
         .background(
@@ -270,6 +312,7 @@ struct GeneralTab: View {
             content()
         }
         .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(.controlBackgroundColor).opacity(0.5)))
     }
 
@@ -329,16 +372,6 @@ struct GeneralTab: View {
         }
     }
 
-    private func statusPill(_ label: String, active: Bool, color: Color = .green) -> some View {
-        Text(label)
-            .font(.caption2).fontWeight(.medium)
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(
-                Capsule().fill(active ? color.opacity(0.15) : Color.secondary.opacity(0.1))
-            )
-            .foregroundStyle(active ? color : .secondary)
-    }
-
     private func stepperRow(_ label: String, value: Binding<Int>, range: ClosedRange<Int>, step: Int, unit: String) -> some View {
         HStack {
             Text(label).font(.callout)
@@ -389,13 +422,33 @@ struct GeneralTab: View {
         ))
     }
 
+    private var weatherCard: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "cloud.sun")
+                .font(.callout)
+                .foregroundStyle(state.weatherEnabled ? .primary : .secondary)
+                .frame(width: 20)
+            Toggle("Weather", isOn: $state.weatherEnabled)
+                .font(.callout)
+            Spacer()
+            TextField("Zip", text: $state.weatherZip)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 80)
+                .disabled(!state.weatherEnabled)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(
+            state.weatherEnabled ? Color.accentColor.opacity(0.06) : Color.clear
+        ))
+    }
+
     // MARK: - Actions
 
     private func toggleCore() {
         if core.isRunning {
             discord.disconnect()
             core.stop()
-            statusMessage = "Stopped."
+            AppState.shared.showToast("Stopped")
         } else {
             if state.workingDirectory.isEmpty {
                 state.workingDirectory = AppState.defaultWorkingDirectory
@@ -411,62 +464,19 @@ struct GeneralTab: View {
             print("[clawd] Config path: \(state.configPath)")
             state.refreshData()
 
-            if state.embeddingMode == "API" {
-                checkEmbeddingHealth()
+            if !state.gemmaModelPath.isEmpty {
+                let resolved = "\(wd)/models/\(state.gemmaModelPath)"
+                if !FileManager.default.fileExists(atPath: resolved) {
+                    AppState.shared.showToast("Gemma model file not found: \(state.gemmaModelPath)", isError: true)
+                }
             }
+            state.scanAvailableModels()
 
             if !state.discordBotToken.isEmpty {
                 discord.connect(token: state.discordBotToken, channelId: state.discordChannelId)
             }
-            statusMessage = "Running."
+            AppState.shared.showToast("Running")
         }
-    }
-
-    private func testBackendCli() {
-        let path = state.backendCliPath
-        guard !path.isEmpty else {
-            AppState.shared.showToast("No CLI path set", isError: true)
-            return
-        }
-        if FileManager.default.isExecutableFile(atPath: path) {
-            AppState.shared.showToast("\(state.backend) found at \(path)")
-        } else if FileManager.default.fileExists(atPath: path) {
-            AppState.shared.showToast("\(path) exists but is not executable", isError: true)
-        } else {
-            AppState.shared.showToast("\(state.backend) not found at \(path)", isError: true)
-        }
-    }
-
-    private func checkEmbeddingHealth() {
-        let url = state.embeddingUrl.isEmpty ? "http://localhost:1234/v1/embeddings" : state.embeddingUrl
-        let model = state.embeddingModel.isEmpty ? "text-embedding-embeddinggemma-300m" : state.embeddingModel
-
-        guard let requestUrl = URL(string: url) else {
-            AppState.shared.showToast("Embedding: invalid URL", isError: true)
-            return
-        }
-
-        var request = URLRequest(url: requestUrl)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 5
-
-        let body: [String: Any] = ["model": model, "input": "health check"]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if let error {
-                AppState.shared.showToast("Embedding server unreachable: \(error.localizedDescription)", isError: true)
-            } else if status != 200 {
-                let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                if body.contains("No models loaded") {
-                    AppState.shared.showToast("Embedding: no model loaded in LM Studio", isError: true)
-                } else {
-                    AppState.shared.showToast("Embedding: server error (status \(status))", isError: true)
-                }
-            }
-        }.resume()
     }
 
     private func browseDirectory() {
@@ -483,60 +493,119 @@ struct GeneralTab: View {
         }
     }
 
-    private func browseGgufModel() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.data]
-        panel.message = "Select a GGUF embedding model"
-        if panel.runModal() == .OK, let url = panel.url {
-            state.embeddingModelPath = url.path
+    // MARK: - Downloads (with progress)
+
+    /// Download a file from `url` into the working directory as `filename`.
+    /// Updates `progressLabel` with MiB progress. Calls `onDone(success)` on
+    /// the main thread when finished (success or failure with toast).
+    private func downloadFile(url: URL, filename: String,
+                              progressLabel: @escaping (String) -> Void,
+                              onDone: @escaping (Bool) -> Void) {
+        let dir = modelsDirectory
+
+        // Ensure the models directory exists before the download starts.
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+        let tracker = DownloadTracker()
+        tracker.destPath = "\(dir)/\(filename)"
+        tracker.progressLabel = progressLabel
+        tracker.onComplete = { ok, error in
+            // Already on main thread (dispatched by the tracker).
+            if let error {
+                AppState.shared.showToast("Failed: \(filename) — \(error.localizedDescription)", isError: true)
+            }
+            onDone(ok)
         }
+        // The session retains the tracker as its delegate.
+        let session = URLSession(configuration: .default, delegate: tracker, delegateQueue: nil)
+        session.downloadTask(with: url).resume()
     }
 
-    private func downloadEmbeddingModel() {
-        guard let url = URL(string: "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf") else { return }
-        let destPath = "\(state.workingDirectory)/nomic-embed-text-v1.5.f16.gguf"
+    private func downloadGemma(size: String) {
+        struct Variant {
+            let repo: String       // HuggingFace repo ID
+            let lmFile: String     // remote filename for the LM GGUF
+            let mmprojRemote: String // remote filename for the mmproj
+            let mmprojLocal: String  // local filename (renamed to avoid collisions)
+        }
+        // Real Gemma 4 repos on HuggingFace (unsloth community quants).
+        let variants: [String: Variant] = [
+            "e2b": Variant(
+                repo: "unsloth/gemma-4-E2B-it-GGUF",
+                lmFile: "gemma-4-E2B-it-Q4_K_M.gguf",
+                mmprojRemote: "mmproj-F16.gguf",
+                mmprojLocal: "mmproj-E2B-F16.gguf"),
+            "e4b": Variant(
+                repo: "unsloth/gemma-4-E4B-it-GGUF",
+                lmFile: "gemma-4-E4B-it-Q4_K_M.gguf",
+                mmprojRemote: "mmproj-F16.gguf",
+                mmprojLocal: "mmproj-E4B-F16.gguf"),
+            "26b-a4b": Variant(
+                repo: "unsloth/gemma-4-26B-A4B-it-GGUF",
+                lmFile: "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+                mmprojRemote: "mmproj-F16.gguf",
+                mmprojLocal: "mmproj-26B-A4B-F16.gguf"),
+            "qwen-9b": Variant(
+                repo: "unsloth/Qwen3.5-9B-GGUF",
+                lmFile: "Qwen3.5-9B-Q4_K_M.gguf",
+                mmprojRemote: "mmproj-F16.gguf",
+                mmprojLocal: "mmproj-Qwen3.5-9B-F16.gguf"),
+        ]
+        guard let v = variants[size] else { return }
 
-        if FileManager.default.fileExists(atPath: destPath) {
-            state.embeddingModelPath = destPath
-            AppState.shared.showToast("Model already exists — path set")
+        let fm = FileManager.default
+        let hasMMproj = !v.mmprojRemote.isEmpty
+        let lmExists = fm.fileExists(atPath: "\(modelsDirectory)/\(v.lmFile)")
+        let mmExists = hasMMproj ? fm.fileExists(atPath: "\(modelsDirectory)/\(v.mmprojLocal)") : true
+
+        if lmExists && mmExists {
+            state.scanAvailableModels()
+            state.gemmaModelPath = v.lmFile
+            state.gemmaMmprojPath = v.mmprojLocal
+            AppState.shared.showToast("\(size.uppercased()) already downloaded")
             return
         }
 
-        isDownloadingModel = true
-        let task = URLSession.shared.downloadTask(with: url) { tempUrl, response, error in
-            DispatchQueue.main.async {
-                isDownloadingModel = false
-                if let error {
-                    AppState.shared.showToast("Download failed: \(error.localizedDescription)", isError: true)
-                    return
-                }
-                guard let tempUrl else { return }
-                let dest = URL(fileURLWithPath: destPath)
-                do {
-                    try? FileManager.default.removeItem(at: dest)
-                    try FileManager.default.moveItem(at: tempUrl, to: dest)
-                    state.embeddingModelPath = destPath
-                    AppState.shared.showToast("Model downloaded to working directory")
-                } catch {
-                    AppState.shared.showToast("Failed to save model: \(error.localizedDescription)", isError: true)
-                }
+        guard let lmURL = URL(string: "https://huggingface.co/\(v.repo)/resolve/main/\(v.lmFile)") else {
+            AppState.shared.showToast("Invalid download URL", isError: true)
+            return
+        }
+        let mmURL = hasMMproj ? URL(string: "https://huggingface.co/\(v.repo)/resolve/main/\(v.mmprojRemote)") : nil
+
+        isDownloadingGemma = true
+
+        // After LM is done, optionally download mmproj, then finalize.
+        let finalize = {
+            if hasMMproj && !mmExists, let mmURL {
+                downloadFile(url: mmURL, filename: v.mmprojLocal,
+                             progressLabel: { p in gemmaDownloadLabel = "Vision projector... \(p)" },
+                             onDone: { ok in
+                    isDownloadingGemma = false
+                    state.scanAvailableModels()
+                    state.gemmaModelPath = v.lmFile
+                    state.gemmaMmprojPath = ok ? v.mmprojLocal : ""
+                    if ok {
+                        AppState.shared.showToast("\(size.uppercased()) downloaded")
+                    }
+                })
+            } else {
+                isDownloadingGemma = false
+                state.scanAvailableModels()
+                state.gemmaModelPath = v.lmFile
+                state.gemmaMmprojPath = v.mmprojLocal
+                AppState.shared.showToast("\(size.uppercased()) downloaded")
             }
         }
-        task.resume()
-    }
 
-    private func browseWhisperModel() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.data]
-        panel.message = "Select a Whisper model file"
-        if panel.runModal() == .OK, let url = panel.url {
-            state.whisperModelPath = url.path
+        if lmExists {
+            finalize()
+        } else {
+            downloadFile(url: lmURL, filename: v.lmFile,
+                         progressLabel: { p in gemmaDownloadLabel = "\(size.uppercased())... \(p)" },
+                         onDone: { ok in
+                if ok { finalize() }
+                else { isDownloadingGemma = false }
+            })
         }
     }
 
@@ -544,37 +613,28 @@ struct GeneralTab: View {
         let remoteFile = "ggml-\(size).en.bin"
         let localFile = "whisper-ggml-\(size).en.bin"
         guard let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(remoteFile)") else { return }
-        let destPath = "\(state.workingDirectory)/\(localFile)"
 
-        if FileManager.default.fileExists(atPath: destPath) {
-            state.whisperModelPath = destPath
-            AppState.shared.showToast("Model already exists — path set")
+        let wd = state.workingDirectory.isEmpty ? AppState.defaultWorkingDirectory : state.workingDirectory
+        if FileManager.default.fileExists(atPath: "\(modelsDirectory)/\(localFile)") {
+            state.scanAvailableModels()
+            state.audioBackend = "whisper"
+            state.whisperModelPath = localFile
+            AppState.shared.showToast("Already downloaded — selected")
             return
         }
 
-        let sizeLabel = size == "base" ? "142 MB" : "466 MB"
-        whisperDownloadLabel = "Downloading \(localFile) (\(sizeLabel))..."
         isDownloadingWhisper = true
-        let task = URLSession.shared.downloadTask(with: url) { tempUrl, response, error in
-            DispatchQueue.main.async {
-                isDownloadingWhisper = false
-                if let error {
-                    AppState.shared.showToast("Download failed: \(error.localizedDescription)", isError: true)
-                    return
-                }
-                guard let tempUrl else { return }
-                let dest = URL(fileURLWithPath: destPath)
-                do {
-                    try? FileManager.default.removeItem(at: dest)
-                    try FileManager.default.moveItem(at: tempUrl, to: dest)
-                    state.whisperModelPath = destPath
-                    AppState.shared.showToast("Whisper \(size) model downloaded")
-                } catch {
-                    AppState.shared.showToast("Failed to save model: \(error.localizedDescription)", isError: true)
-                }
+        downloadFile(url: url, filename: localFile,
+                     progressLabel: { p in whisperDownloadLabel = "Whisper \(size)... \(p)" },
+                     onDone: { ok in
+            isDownloadingWhisper = false
+            if ok {
+                state.scanAvailableModels()
+                state.audioBackend = "whisper"
+                state.whisperModelPath = localFile
+                AppState.shared.showToast("Whisper \(size) downloaded")
             }
-        }
-        task.resume()
+        })
     }
 
     private func browseServiceAccount() {
@@ -596,6 +656,65 @@ struct GeneralTab: View {
             } catch {
                 AppState.shared.showToast("Failed to copy: \(error.localizedDescription)", isError: true)
             }
+        }
+    }
+}
+
+// MARK: - Download delegate with progress reporting
+
+private class DownloadTracker: NSObject, URLSessionDownloadDelegate {
+    var progressLabel: ((String) -> Void)?
+    var onComplete: ((Bool, Error?) -> Void)?
+    var destPath: String = ""  // absolute path — file is moved here inside the callback
+
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        let written = Double(totalBytesWritten) / 1_048_576 // MiB
+        let total = Double(totalBytesExpectedToWrite) / 1_048_576
+        let label = total > 0
+            ? String(format: "%.0f / %.0f MiB", written, total)
+            : String(format: "%.0f MiB", written)
+        DispatchQueue.main.async { self.progressLabel?(label) }
+    }
+
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        // The temp file is deleted by the OS when this callback returns,
+        // so we MUST move it synchronously here — not on the main thread.
+
+        // Reject HTML error pages from HuggingFace (e.g. 404s).
+        // Valid model files (GGUF, ggml) never start with '<'.
+        if let handle = try? FileHandle(forReadingFrom: location) {
+            let head = handle.readData(ofLength: 1)
+            handle.closeFile()
+            if head.first == 0x3C { // '<' — HTML
+                let err = NSError(domain: "DownloadTracker", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey:
+                        "Download returned an HTML error page, not a model file. The URL may be wrong."])
+                DispatchQueue.main.async { self.onComplete?(false, err) }
+                return
+            }
+        }
+
+        let dest = URL(fileURLWithPath: destPath)
+        do {
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.moveItem(at: location, to: dest)
+            DispatchQueue.main.async { self.onComplete?(true, nil) }
+        } catch {
+            DispatchQueue.main.async { self.onComplete?(false, error) }
+        }
+    }
+
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    didCompleteWithError error: Error?) {
+        if let error {
+            DispatchQueue.main.async { self.onComplete?(false, error) }
         }
     }
 }

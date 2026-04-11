@@ -88,8 +88,39 @@ std::vector<ToolCall> parse_tool_calls(std::string_view text) {
                         ++p;
                     if (p >= params_str.size()) break;
 
+                    // Strip keyword prefixes like "date=" or "name=" that
+                    // small models often produce (e.g. get_weather(date="2026-04-09"))
+                    size_t kw_scan = p;
+                    while (kw_scan < params_str.size() &&
+                           params_str[kw_scan] != '=' && params_str[kw_scan] != ',' &&
+                           params_str[kw_scan] != ')' && params_str[kw_scan] != '"')
+                        ++kw_scan;
+                    if (kw_scan < params_str.size() && params_str[kw_scan] == '=') {
+                        p = kw_scan + 1; // skip past the '='
+                        // Skip whitespace after '='
+                        while (p < params_str.size() && (params_str[p] == ' ' || params_str[p] == '\t'))
+                            ++p;
+                    }
+
+                    if (p >= params_str.size()) break;
+
                     std::string param = parse_param(params_str, p);
                     if (!param.empty()) {
+                        // Also strip keyword prefixes inside quoted strings.
+                        // Small models write "date=2026-04-09" instead of "2026-04-09".
+                        auto eq = param.find('=');
+                        if (eq != std::string::npos && eq < param.size() - 1) {
+                            // Only strip if the part before '=' looks like an identifier
+                            bool is_kw = true;
+                            for (size_t i = 0; i < eq; ++i) {
+                                char c = param[i];
+                                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') {
+                                    is_kw = false;
+                                    break;
+                                }
+                            }
+                            if (is_kw) param = param.substr(eq + 1);
+                        }
                         call.params.push_back(std::move(param));
                     }
                 }

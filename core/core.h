@@ -26,6 +26,19 @@ void core_shutdown(void);
 // Discord events
 void core_on_message_received(const char* user, const char* text,
                               const char* channel_id, const char* message_id);
+
+// Local chat tab: send a text message with an optional attached image.
+// image_path may be NULL or empty for text-only. Unlike Discord, there's no
+// channel_id / message_id because nothing is echoed back over the wire.
+void core_send_message_with_image(const char* user, const char* text,
+                                  const char* image_path);
+
+// Returns true if the Gemma LM is loaded and ready for chat.
+int core_is_gemma_loaded(void);
+
+// Returns true if a vision-capable Gemma model + mmproj are currently loaded.
+// Used by the Chat tab to enable/disable the attach-image button.
+int core_has_vision(void);
 void core_on_connected(void);
 void core_on_disconnected(void);
 

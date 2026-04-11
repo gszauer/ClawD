@@ -24,7 +24,7 @@ CXX_SRCS := config.cpp \
             backend.cpp \
             task_queue.cpp \
             calendar.cpp \
-            local_embed.cpp \
+            local_gemma.cpp \
             whisper_transcribe.cpp \
             core.cpp \
             main.cpp
@@ -32,18 +32,28 @@ CXX_SRCS := config.cpp \
 # C sources
 C_SRCS   := cJSON.c
 
-CXX_OBJS := $(addprefix $(TMPDIR)/,$(CXX_SRCS:.cpp=.o))
-C_OBJS   := $(addprefix $(TMPDIR)/,$(C_SRCS:.c=.o))
-OBJS     := $(CXX_OBJS) $(C_OBJS)
+# Objective-C sources (Metal runtime queries)
+OBJC_SRCS := metal_query.m
 
-# llama.cpp static libraries (pre-built in deps/lib/)
-LLAMA_LIBS := deps/lib/libllama.a \
+CXX_OBJS  := $(addprefix $(TMPDIR)/,$(CXX_SRCS:.cpp=.o))
+C_OBJS    := $(addprefix $(TMPDIR)/,$(C_SRCS:.c=.o))
+OBJC_OBJS := $(addprefix $(TMPDIR)/,$(OBJC_SRCS:.m=.o))
+OBJS      := $(CXX_OBJS) $(C_OBJS) $(OBJC_OBJS)
+
+# llama.cpp / whisper.cpp static libraries.
+# Link order matters: mtmd must come before llama/ggml (static lib dep ordering).
+# Rebuild with: ./deps/build_llama.sh
+LLAMA_LIBS := deps/lib/libmtmd.a \
+              deps/lib/libllama.a \
               deps/lib/libwhisper.a \
               deps/lib/libggml.a \
               deps/lib/libggml-base.a \
               deps/lib/libggml-cpu.a \
-              deps/lib/libggml-blas.a
-LDFLAGS    := -framework Accelerate -framework Foundation -lstdc++
+              deps/lib/libggml-blas.a \
+              deps/lib/libggml-metal.a
+LDFLAGS    := -framework Accelerate -framework Foundation \
+              -framework Metal -framework MetalKit \
+              -lstdc++
 
 all: $(TARGET)
 
@@ -59,6 +69,9 @@ $(TMPDIR)/%.o: $(SRCDIR)/%.cpp | $(TMPDIR)
 
 $(TMPDIR)/%.o: $(SRCDIR)/%.c | $(TMPDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TMPDIR)/%.o: $(SRCDIR)/%.m | $(TMPDIR)
+	$(CC) -O2 -c -o $@ $<
 
 $(TMPDIR):
 	mkdir -p $(TMPDIR)

@@ -2,6 +2,9 @@
 tmp/
 assistant
 
+# llama.cpp source tree (cloned by deps/build_llama.sh — not versioned)
+deps/llama.cpp-src/
+
 # Xcode build output (CONFIGURATION_BUILD_DIR = SRCROOT)
 clawd.app/
 clawd.swiftmodule/
