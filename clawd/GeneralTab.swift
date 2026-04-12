@@ -387,7 +387,6 @@ struct GeneralTab: View {
         if core.isRunning {
             discord.disconnect()
             core.stop()
-            statusMessage = "Stopped."
         } else {
             if state.workingDirectory.isEmpty {
                 state.workingDirectory = AppState.defaultWorkingDirectory
@@ -410,7 +409,6 @@ struct GeneralTab: View {
             if !state.discordBotToken.isEmpty {
                 discord.connect(token: state.discordBotToken, channelId: state.discordChannelId)
             }
-            statusMessage = "Running."
         }
     }
 
