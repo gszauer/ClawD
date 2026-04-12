@@ -58,6 +58,28 @@ static std::vector<float> embed_text(const std::string& text) {
     return local_gemma_embed(text);
 }
 
+// After stripping tool calls the model sometimes leaves nothing behind —
+// it "forgot" to actually reply. Detect that and ask it once more for a
+// plain natural-language response.
+static bool is_blank(const std::string& s) {
+    return s.find_first_not_of(" \n\r\t") == std::string::npos;
+}
+
+static void ensure_reply(const std::string& followup,
+                         std::string& response,
+                         std::string& clean_response) {
+    if (!is_blank(clean_response)) return;
+    std::string retry = followup +
+        "\n\n## Assistant's Previous Response\n" + response +
+        "\n\nYou did not reply to the user. Write a direct natural-language "
+        "response now. Do not emit any tool calls.";
+    response = Backend::execute(g_config, retry);
+    clean_response = strip_tool_calls(response);
+    if (is_blank(clean_response)) {
+        clean_response = "[Error: model produced no reply after tool use]";
+    }
+}
+
 static double time_for_today(const std::string& hhmm) {
     if (hhmm.size() < 5) return 0;
     int hour = std::atoi(hhmm.substr(0, 2).c_str());
@@ -142,19 +164,33 @@ static void run_proactive(const char* label, std::string_view instruction) {
 
     // Parse and execute tool calls (same as message path)
     auto tool_calls = parse_tool_calls(response);
-    if (!tool_calls.empty()) {
+    std::string followup;
+    bool had_tool_calls = !tool_calls.empty();
+    // Log the triggering system instruction up front so proactive runs are
+    // visible in chat history even if generation/tool calls later fail.
+    g_chat->append_user("System", instruction);
+
+    if (had_tool_calls) {
         std::string tool_results;
         for (const auto& call : tool_calls) {
             ToolHandler* handler = g_tools->find(call.name);
+            std::string result;
             if (handler) {
-                std::string result = handler->execute(call.params);
+                result = handler->execute(call.params);
                 tool_results += "Tool " + call.name + " result: " + result + "\n";
             } else {
+                result = "unknown tool";
                 tool_results += "Tool " + call.name + ": unknown tool\n";
             }
+            std::string params_joined;
+            for (size_t i = 0; i < call.params.size(); ++i) {
+                if (i > 0) params_joined += ", ";
+                params_joined += "\"" + call.params[i] + "\"";
+            }
+            g_chat->append_tool(call.name + "(" + params_joined + ") -> " + result);
         }
 
-        std::string followup = prompt +
+        followup = prompt +
             "\n\n## Assistant's Previous Response\n" + response +
             "\n\n## Tool Results\n" + tool_results +
             "\n\nIncorporate the tool results into your response to the user. "
@@ -163,12 +199,10 @@ static void run_proactive(const char* label, std::string_view instruction) {
     }
 
     std::string clean_response = strip_tool_calls(response);
+    if (had_tool_calls) ensure_reply(followup, response, clean_response);
     bool is_error = clean_response.find("[Error:") == 0;
 
-    if (!is_error) {
-        g_chat->append_user("System", instruction);
-        g_chat->append_assistant(clean_response);
-    }
+    g_chat->append_assistant(clean_response);
 
     // Send to Discord
     if (g_response_callback && !g_config.discord_channel_id.empty()) {
@@ -594,7 +628,9 @@ static void handle_message_impl(const std::string& user_str,
 
     // If tool calls found, execute them and do a follow-up
     std::vector<std::string> tool_emojis;
-    if (!tool_calls.empty()) {
+    std::string followup;
+    bool had_tool_calls = !tool_calls.empty();
+    if (had_tool_calls) {
         std::string tool_results;
         for (const auto& call : tool_calls) {
             ToolHandler* handler = g_tools->find(call.name);
@@ -628,7 +664,7 @@ static void handle_message_impl(const std::string& user_str,
         }
 
         // Follow-up prompt with tool results — text-only (no need to re-feed the image)
-        std::string followup = prompt +
+        followup = prompt +
             "\n\n## Assistant's Previous Response\n" + response +
             "\n\n## Tool Results\n" + tool_results +
             "\n\nIncorporate the tool results into your response to the user. "
@@ -639,6 +675,7 @@ static void handle_message_impl(const std::string& user_str,
 
     // Strip any remaining tool calls from final response
     std::string clean_response = strip_tool_calls(response);
+    if (had_tool_calls) ensure_reply(followup, response, clean_response);
 
     bool is_error = clean_response.find("[Error:") == 0;
 
