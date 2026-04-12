@@ -35,6 +35,8 @@ Both Phase 1 (C++ core) and Phase 2 (Swift native layer) are implemented and fun
 - Google Calendar integration (service account auth, sync, live queries)
 - Local-only calendar fallback when Google isn't connected
 - Discord WebSocket gateway with reconnect, reactions, and message routing
+- Discord image attachments downloaded to `working/tmp/`, handed to Claude Code for on-the-fly reading, then deleted after the response
+- Discord voice messages transcribed locally via whisper.cpp
 - Proactive messages (daily report, meal prep, overdue chores, end-of-day summary)
 - Recurring reminders (daily, weekly, monthly) and one-shot cleanup
 - Desktop notifications via UNUserNotificationCenter
@@ -143,7 +145,9 @@ working/
   calendar_cache.json         # Cached calendar events
   notes.index                 # HNSWLIB binary search index
   index_map.json              # HNSWLIB label-to-filename mapping
-  tmp/                        # Temporary files (audio downloads, cleared on launch)
+  tmp/                        # Discord audio downloads and image attachments.
+                              # Images live here only long enough for Claude
+                              # Code to Read them; deleted after the response.
 
   chat/
     2026-03-29.md             # Daily chat logs
@@ -197,11 +201,15 @@ A single `config.json` in the working directory. The native UI reads and writes 
 }
 ```
 
-Backend options: `"claude"`, `"gemini"`, `"codex"`, `"API"`. CLI backends use `backend_cli_path`. API backend uses `backend_api_url` with optional `backend_api_key` sent as `Authorization: Bearer`. Claude CLI is invoked with `--allowedTools WebSearch`.
+Backend options: `"claude"`, `"gemini"`, `"codex"`, `"API"`. CLI backends use `backend_cli_path`. API backend uses `backend_api_url` with optional `backend_api_key` sent as `Authorization: Bearer`. Claude CLI is invoked with `--allowedTools "WebSearch Read(<working_directory>/tmp/**)"` — the scoped Read permission is what lets the assistant open image attachments that the message handler drops into `tmp/`.
 
 Embedding options: `"API"` (remote server), `"local"` (llama.cpp with GGUF model), `"off"`.
 
 Audio options: `"whisper"` (local whisper.cpp transcription), `"off"` (default).
+
+### Path Fields
+
+`embedding_model_path` and `whisper_model_path` are stored relative to `working_directory` whenever the file lives inside the working dir (so `config.json` stays portable when the working dir moves). Paths outside the working dir are stored as absolute. The core and the Swift layer both expand relative paths against `working_directory` when they need to open the file. `working_directory` itself is always absolute, and `backend_cli_path` is left absolute since the CLI binary normally lives outside the working dir.
 
 Default CLI paths:
 - Claude: `/Users/user/.local/bin/claude`
@@ -395,6 +403,12 @@ Every prompt sent to the AI is assembled from these components in order:
    - Top N semantically relevant notes (from embedding search)
 4. **Chat History** — last N exchanges from today/yesterday
 5. **User Message** — with username: `## User Message (gszauer)` or `## User Message (Local)`
+6. **Image Attachment Directive (optional)** — only when the caller passed image paths. Appended after the user message as:
+   ```
+   The user attached an image. Use your Read tool on this path to view it:
+   - /abs/path/to/working/tmp/<message_id>_<filename>.png
+   ```
+   The wording is deliberate: a bare `[Image: path]` marker is not reliable, but an explicit instruction consistently triggers Claude's Read tool. Image paths are **only** written into this transient directive — the clean user text (without any path markers) is what gets appended to chat history, so future prompts never reference the deleted tmp file.
 
 Supported template variables: `{{assistant_name}}`, `{{datetime}}`, `{{date}}`, `{{day_of_week}}`, `{{tools}}`
 
@@ -466,6 +480,16 @@ The Swift native layer manages the Discord WebSocket:
 7. Final response sent to Discord + logged to chat history
 8. Tool-specific emoji added, crab removed
 
+**Image messages (Claude Code backend):**
+1. Attachment detected via `content_type` starting with `image/`; the Swift layer kicks off parallel `URLSession.downloadTask` fetches into `working/tmp/<message_id>_<filename>`, joined on a `DispatchGroup`
+2. On completion, `core_on_message_received` is called with the caption text AND an array of absolute image paths (bridged to C via `strdup` → `UnsafePointer<CChar>?`)
+3. The core stores the clean caption text in chat history (no path markers ever written to disk)
+4. The prompt assembler appends the "Use your Read tool on this path" directive with each absolute path to the transient prompt
+5. `Backend::execute` runs Claude Code with `--allowedTools "WebSearch Read(<working_dir>/tmp/**)"`, which is what permits the Read tool to open the file
+6. If the first response contains tool calls, the core builds the follow-up prompt from the same original `prompt` string (so the directive and paths survive into the second round) and calls `Backend::execute` again
+7. After the final response lands, the core walks the image path vector and `std::remove()`s each file
+8. Image-only messages (attachment with empty caption) are permitted — the empty-text guard allows them through when at least one image is present
+
 **Voice messages (when whisper is enabled):**
 1. Audio attachment detected, downloaded to `working/tmp/`
 2. Ear emoji added to the message
@@ -474,6 +498,8 @@ The Swift native layer manages the Discord WebSocket:
 5. AI responds (same flow as text from step 4 above)
 6. Transcript posted to Discord after the AI response
 7. Audio file deleted from tmp
+
+Audio and image attachments are handled independently: a message with both creates one text-flow call (for the images + caption) and one separate transcript call (for the audio).
 
 ### Bot Personality
 

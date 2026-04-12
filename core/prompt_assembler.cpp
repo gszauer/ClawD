@@ -150,6 +150,22 @@ The following {{variables}} are replaced at runtime in the prompt files below:
 
   notes.txt           - This file. Reference only, not sent to the AI.
 
+## Image Attachments (Claude Code backend)
+
+When the backend is "claude", image attachments on Discord are handled
+automatically -- no template file controls it. The flow: the image is
+downloaded to working/tmp/, the path is appended to the current user
+message with an explicit "Use your Read tool on this path" instruction,
+Claude reads it, and the tmp file is deleted after the response.
+
+The image directive is NOT stored in chat history -- only your caption
+text is persisted, so future prompts never reference deleted files.
+
+To change HOW the assistant describes images (e.g. "be terse about
+images", "always extract any visible text"), add that guidance to
+system_prompt.md. The directive itself is deliberately hardcoded so
+Claude reliably uses the Read tool.
+
 ## Editing
 
 Edit these files with any text editor (or via the Prompts tab in the app).

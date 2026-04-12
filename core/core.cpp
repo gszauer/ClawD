@@ -50,6 +50,18 @@ static const int HEARTBEAT_TIMER = 1;
 
 // --- Helpers ---
 
+// Expand a stored path against the working directory. Absolute paths and
+// empty strings pass through unchanged.
+static std::string resolve_in_working_dir(const std::string& stored,
+                                          const std::string& wd) {
+    if (stored.empty() || stored[0] == '/') return stored;
+    if (wd.empty()) return stored;
+    std::string result = wd;
+    if (result.back() != '/') result += '/';
+    result += stored;
+    return result;
+}
+
 static std::vector<float> embed_text(const std::string& text) {
     // Local mode: use bert.cpp
     if (g_config.embedding_mode == "local") {
@@ -420,12 +432,12 @@ void core_initialize(const char* config_path, PlatformCallbacks callbacks,
 
     // Local embeddings
     if (g_config.embedding_mode == "local" && !g_config.embedding_model_path.empty()) {
-        local_embed_init(g_config.embedding_model_path);
+        local_embed_init(resolve_in_working_dir(g_config.embedding_model_path, wd));
     }
 
     // Whisper transcription
     if (g_config.audio_backend == "whisper" && !g_config.whisper_model_path.empty()) {
-        whisper_transcribe_init(g_config.whisper_model_path);
+        whisper_transcribe_init(resolve_in_working_dir(g_config.whisper_model_path, wd));
     }
 
     // Note search
@@ -653,7 +665,8 @@ void core_on_config_changed() {
         g_config.embedding_model_path != old_embed_path) {
         local_embed_shutdown();
         if (g_config.embedding_mode == "local" && !g_config.embedding_model_path.empty()) {
-            local_embed_init(g_config.embedding_model_path);
+            local_embed_init(resolve_in_working_dir(g_config.embedding_model_path,
+                                                    g_config.working_directory));
         }
     }
 

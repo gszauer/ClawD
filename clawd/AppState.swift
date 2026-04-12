@@ -135,6 +135,31 @@ final class AppState {
 
     private init() {}
 
+    // MARK: - Path helpers
+
+    /// Expand a stored path: if it's relative, resolve it against the working
+    /// directory. Absolute paths and empty strings pass through unchanged.
+    private func absolutizePath(_ stored: String) -> String {
+        guard !stored.isEmpty, !stored.hasPrefix("/") else { return stored }
+        let wd = workingDirectory.isEmpty ? AppState.defaultWorkingDirectory : workingDirectory
+        return (wd as NSString).appendingPathComponent(stored)
+    }
+
+    /// Inverse of absolutizePath: if `abs` is inside the working directory,
+    /// return the relative portion; otherwise pass it through unchanged.
+    private func relativizePath(_ abs: String) -> String {
+        guard !abs.isEmpty, abs.hasPrefix("/") else { return abs }
+        let wd = workingDirectory.isEmpty ? AppState.defaultWorkingDirectory : workingDirectory
+        guard !wd.isEmpty else { return abs }
+        let stdWd = (wd as NSString).standardizingPath
+        let stdAbs = (abs as NSString).standardizingPath
+        let prefix = stdWd.hasSuffix("/") ? stdWd : stdWd + "/"
+        if stdAbs.hasPrefix(prefix) {
+            return String(stdAbs.dropFirst(prefix.count))
+        }
+        return abs
+    }
+
     // MARK: - Config I/O
 
     func loadConfig() {
@@ -154,9 +179,9 @@ final class AppState {
         embeddingMode = validEmbedding.contains(json["embedding_mode"] as? String ?? "") ? json["embedding_mode"] as! String : "API"
         embeddingUrl = json["embedding_url"] as? String ?? ""
         embeddingModel = json["embedding_model"] as? String ?? ""
-        embeddingModelPath = json["embedding_model_path"] as? String ?? ""
+        embeddingModelPath = absolutizePath(json["embedding_model_path"] as? String ?? "")
         audioBackend = validAudio.contains(json["audio_backend"] as? String ?? "") ? json["audio_backend"] as! String : "off"
-        whisperModelPath = json["whisper_model_path"] as? String ?? ""
+        whisperModelPath = absolutizePath(json["whisper_model_path"] as? String ?? "")
         assistantName = json["assistant_name"] as? String ?? "ClawD"
         assistantEmoji = json["assistant_emoji"] as? String ?? "🦀"
         discordBotToken = json["discord_bot_token"] as? String ?? ""
@@ -207,9 +232,9 @@ final class AppState {
             "embedding_mode": embeddingMode,
             "embedding_url": embeddingUrl,
             "embedding_model": embeddingModel,
-            "embedding_model_path": embeddingModelPath,
+            "embedding_model_path": relativizePath(embeddingModelPath),
             "audio_backend": audioBackend,
-            "whisper_model_path": whisperModelPath,
+            "whisper_model_path": relativizePath(whisperModelPath),
             "assistant_name": assistantName,
             "assistant_emoji": assistantEmoji,
             "discord_bot_token": discordBotToken,

@@ -8,6 +8,7 @@ A native macOS personal assistant that connects to Discord, manages your calenda
 
 - **Chat** with an AI assistant via Discord or the local app UI
 - **Voice messages** — Discord audio messages are transcribed locally via whisper.cpp and processed as text
+- **Image messages** — Discord image attachments are downloaded to `working/tmp/` and handed to Claude Code, which reads them via its Read tool; files are cleaned up after the response (Claude Code backend only)
 - **Reminders** with one-time and recurring schedules (daily, weekly, monthly)
 - **Meals** tracking with home/delivery categories and day-of-month scheduling
 - **Chores** with color-coded categories, recurrence, and completion tracking
@@ -249,6 +250,7 @@ The app is designed to run with missing components:
 | Discord | Local chat UI works, proactive messages go to chat log + desktop notifications |
 | Embedding server | Note search falls back to title matching, no auto-injection in prompt |
 | Whisper model | Voice messages are downloaded but not transcribed |
+| Claude Code backend | Image attachments on Discord are silently ignored (API/gemini/codex backends don't go through the image flow) |
 | Google Calendar | Calendar tools use local-only storage, events show orange badge |
 | Config file | Default settings used, config created on first save |
 
@@ -280,10 +282,6 @@ The Xcode project is configured with:
 - `GCC_PREPROCESSOR_DEFINITIONS = NO_MANUAL_VECTORIZATION` — HNSWLIB ARM compatibility
 - `ENABLE_APP_SANDBOX = NO` — required for file and network access
 - `core/main.cpp` excluded from Xcode build (has its own `main()`)
-
-## TODO
-
-- Image input: take image files sent on discord, convert them, store in tmp directory, and let the LLM read the file.
 
 ## License
 

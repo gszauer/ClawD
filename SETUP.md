@@ -28,7 +28,7 @@ ClawD needs an AI backend to generate responses. Pick one:
 4. The CLI path auto-fills to `/Users/user/.local/bin/claude`
 5. Click **Test** to verify the binary exists
 
-Claude is invoked with `--allowedTools WebSearch` so the AI can search the web.
+Claude is invoked with `--allowedTools "WebSearch Read(<working_directory>/tmp/**)"` so the AI can search the web and, when a Discord image attachment arrives, read the downloaded file from the tmp directory. Read is scoped to `working/tmp/**` only — nothing else on disk is exposed.
 
 ### Gemini CLI
 
@@ -86,6 +86,8 @@ The llama.cpp static libraries are included in `deps/` — no extra setup requir
 
 You can switch between API and local freely. After switching, reindex your notes so the embeddings are consistent.
 
+Model paths that live inside the working directory are stored as relative paths in `config.json`, so you can move the working directory without editing config by hand. Paths outside the working dir are stored as absolute.
+
 ---
 
 ## 3b. Audio Transcription (Optional)
@@ -105,6 +107,25 @@ When a voice message arrives on Discord:
 6. An ear emoji is added to the original voice message
 
 Without whisper configured, voice messages are ignored.
+
+---
+
+## 3c. Image Attachments (Claude Code only)
+
+When the Claude Code backend is selected, Discord image attachments are handled automatically — no configuration needed.
+
+What happens when you send an image on Discord:
+
+1. Each attachment with a `content_type` starting with `image/` is downloaded in parallel to `working/tmp/<message_id>_<filename>`
+2. The caption text (if any) goes to the AI along with the absolute paths
+3. The assembled prompt includes an explicit "Use your Read tool on this path to view it" instruction after your message
+4. Claude Code reads the file via its Read tool (permission is scoped to `working/tmp/**`)
+5. The AI responds about the image like any other message
+6. After the response is sent, the tmp file is deleted
+
+Chat history only stores your caption text — the image paths never get written to disk-backed history, so future prompts don't reference deleted files. Image-only messages (no caption) are allowed; you can send a bare image and ClawD will still process it.
+
+This only works with the `claude` backend. The API backend (LM Studio and similar) and the gemini/codex fallbacks don't go through this path — images sent there are currently ignored.
 
 ---
 
@@ -163,6 +184,8 @@ When ClawD is running and Discord is connected:
 - The response is sent back to Discord
 - A tool-specific emoji is added (bell for reminders, memo for notes, etc.)
 - The crab reaction is removed
+- Voice attachments are transcribed (if whisper is enabled) — see section 3b
+- Image attachments are handed to Claude Code to read (if the claude backend is selected) — see section 3c
 
 The General tab shows "Discord: Connected" next to the status indicator. If the connection fails, you'll see a toast with the error. Common issues:
 
