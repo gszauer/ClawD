@@ -737,6 +737,26 @@ std::string DeleteCalendarEventHandler::execute(const std::vector<std::string>& 
 
 // --- Weather ---
 
+// wttr.in's j1 format gives 8 hourly entries per day at 3-hour intervals
+// (00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00). Index 3 is 09:00,
+// 4 is 12:00, 6 is 18:00 — morning/noon/evening for human-friendly reports.
+static void format_hourly_slot(std::ostringstream& out, const cJSON* hourly_arr,
+                               int idx, const char* label) {
+    const cJSON* slot = hourly_arr ? cJSON_GetArrayItem(hourly_arr, idx) : nullptr;
+    if (!slot) return;
+    const cJSON* tempF = cJSON_GetObjectItemCaseSensitive(slot, "tempF");
+    const cJSON* desc_arr = cJSON_GetObjectItemCaseSensitive(slot, "weatherDesc");
+    const cJSON* desc = desc_arr ? cJSON_GetArrayItem(desc_arr, 0) : nullptr;
+    const cJSON* desc_val = desc ? cJSON_GetObjectItemCaseSensitive(desc, "value") : nullptr;
+    const cJSON* rain = cJSON_GetObjectItemCaseSensitive(slot, "chanceofrain");
+
+    out << "  " << label << ": ";
+    if (cJSON_IsString(desc_val)) out << desc_val->valuestring;
+    if (cJSON_IsString(tempF)) out << ", " << tempF->valuestring << "°F";
+    if (cJSON_IsString(rain)) out << ", " << rain->valuestring << "% rain";
+    out << "\n";
+}
+
 static std::string url_encode(const std::string& s) {
     std::string out;
     for (char c : s) {
@@ -764,7 +784,7 @@ std::string GetWeatherHandler::execute(const std::vector<std::string>& params) {
         }
     }
     if (location.empty()) {
-        return "Error: get_weather requires a location (zip code or city) and none is configured";
+        return "Error: no zip code or city provided. Ask the user to set a zip code in Settings > Notifications > Weather, or pass a location directly (e.g. get_weather(\"90210\", \"today\")).";
     }
 
     int day_idx = 0;
@@ -814,22 +834,19 @@ std::string GetWeatherHandler::execute(const std::vector<std::string>& params) {
         const cJSON* maxF = cJSON_GetObjectItemCaseSensitive(day_obj, "maxtempF");
         const cJSON* minF = cJSON_GetObjectItemCaseSensitive(day_obj, "mintempF");
         const cJSON* hourly_arr = cJSON_GetObjectItemCaseSensitive(day_obj, "hourly");
-        const cJSON* noon = hourly_arr ? cJSON_GetArrayItem(hourly_arr, 4) : nullptr; // ~midday
-        const cJSON* noon_desc_arr = noon ? cJSON_GetObjectItemCaseSensitive(noon, "weatherDesc") : nullptr;
-        const cJSON* noon_desc = noon_desc_arr ? cJSON_GetArrayItem(noon_desc_arr, 0) : nullptr;
-        const cJSON* noon_desc_val = noon_desc ? cJSON_GetObjectItemCaseSensitive(noon_desc, "value") : nullptr;
-        const cJSON* chance_rain = noon ? cJSON_GetObjectItemCaseSensitive(noon, "chanceofrain") : nullptr;
 
         const char* label = (day_idx == 0) ? "Today" : (day_idx == 1) ? "Tomorrow" : "Forecast";
         out << label;
         if (cJSON_IsString(date)) out << " (" << date->valuestring << ")";
         out << ": ";
-        if (cJSON_IsString(noon_desc_val)) out << noon_desc_val->valuestring << ", ";
         if (cJSON_IsString(minF) && cJSON_IsString(maxF)) {
             out << "low " << minF->valuestring << "°F / high " << maxF->valuestring << "°F";
         }
-        if (cJSON_IsString(chance_rain)) out << ", " << chance_rain->valuestring << "% chance of rain";
         out << "\n";
+
+        format_hourly_slot(out, hourly_arr, 3, "Morning"); // 09:00
+        format_hourly_slot(out, hourly_arr, 4, "Noon");    // 12:00
+        format_hourly_slot(out, hourly_arr, 6, "Evening"); // 18:00
     }
 
     cJSON_Delete(root);
