@@ -407,7 +407,8 @@ std::string PromptAssembler::assemble(
     std::string_view user_message,
     std::string_view username,
     const std::vector<std::string>& relevant_note_ids,
-    const std::string& tool_definitions) const {
+    const std::string& tool_definitions,
+    const std::vector<std::string>& image_paths) const {
 
     std::ostringstream prompt;
 
@@ -426,6 +427,16 @@ std::string PromptAssembler::assemble(
     }
 
     prompt << "## User Message (" << username << ")\n" << user_message << "\n";
+
+    if (!image_paths.empty()) {
+        bool single = image_paths.size() == 1;
+        prompt << "\nThe user attached " << (single ? "an image" : "images")
+               << ". Use your Read tool on " << (single ? "this path" : "these paths")
+               << " to view " << (single ? "it" : "them") << ":\n";
+        for (const auto& p : image_paths) {
+            prompt << "- " << p << "\n";
+        }
+    }
 
     return prompt.str();
 }

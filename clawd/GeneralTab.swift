@@ -9,7 +9,7 @@ struct GeneralTab: View {
     @State private var isDownloadingModel = false
     @State private var isDownloadingWhisper = false
     @State private var whisperDownloadLabel = ""
-    @State private var showAdvanced = false
+    @State private var showAdvanced = true
 
     private let backends = ["claude", "API"]
     private let embeddingModes = ["API", "local", "off"]
@@ -195,19 +195,6 @@ struct GeneralTab: View {
                         .padding(.horizontal, 1)
                     }
                 }
-
-                // ── Save ──
-                HStack {
-                    Spacer()
-                    Button {
-                        state.saveConfig()
-                        statusMessage = "Config saved."
-                    } label: {
-                        Label("Save Config", systemImage: "square.and.arrow.down")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                }
             }
             .padding(20)
         }
@@ -227,21 +214,8 @@ struct GeneralTab: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(core.isRunning ? "Running" : "Stopped")
-                    .font(.title3).fontWeight(.semibold)
-                HStack(spacing: 12) {
-                    statusPill("Core", active: core.isRunning)
-                    statusPill("Discord", active: discord.isConnected)
-                    statusPill(state.backend, active: core.isRunning, color: .blue)
-                    if state.embeddingMode != "off" {
-                        statusPill("Embedding", active: core.isRunning, color: .purple)
-                    }
-                    if state.audioBackend != "off" {
-                        statusPill("Whisper", active: core.isRunning, color: .orange)
-                    }
-                }
-            }
+            Text(core.isRunning ? "Running" : "Stopped")
+                .font(.title3).fontWeight(.semibold)
 
             Spacer()
 
@@ -249,6 +223,15 @@ struct GeneralTab: View {
                 Text(statusMessage)
                     .font(.caption).foregroundStyle(.secondary)
             }
+
+            Button {
+                state.saveConfig()
+                statusMessage = "Config saved."
+            } label: {
+                Label("Save Config", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
         }
         .padding(16)
         .background(
@@ -327,16 +310,6 @@ struct GeneralTab: View {
         }
     }
 
-    private func statusPill(_ label: String, active: Bool, color: Color = .green) -> some View {
-        Text(label)
-            .font(.caption2).fontWeight(.medium)
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(
-                Capsule().fill(active ? color.opacity(0.15) : Color.secondary.opacity(0.1))
-            )
-            .foregroundStyle(active ? color : .secondary)
-    }
-
     private func stepperRow(_ label: String, value: Binding<Int>, range: ClosedRange<Int>, step: Int, unit: String) -> some View {
         HStack {
             Text(label).font(.callout)
@@ -375,12 +348,11 @@ struct GeneralTab: View {
             Toggle(label, isOn: enabled)
                 .font(.callout)
             Spacer()
-            if enabled.wrappedValue {
-                TextField("ZIP", text: zip)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.small)
-                    .frame(width: 70)
-            }
+            TextField("ZIP", text: zip)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .frame(width: 70)
+                .disabled(!enabled.wrappedValue)
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 8).fill(

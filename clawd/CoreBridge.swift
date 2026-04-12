@@ -113,7 +113,7 @@ final class CoreBridge: @unchecked Sendable {
 
     func sendMessage(user: String, text: String, channelId: String = "", messageId: String = "") {
         guard isRunning else { return }
-        core_on_message_received(user, text, channelId, messageId)
+        core_on_message_received(user, text, channelId, messageId, nil, 0)
     }
 
     /// Append a message as the assistant (no AI call) and log to chat history.

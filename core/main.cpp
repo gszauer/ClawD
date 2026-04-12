@@ -130,7 +130,7 @@ int main(int argc, char* argv[]) {
 
             // Process as a user message
             std::cout << std::endl;
-            core_on_message_received("User", line.c_str(), "", "");
+            core_on_message_received("User", line.c_str(), "", "", nullptr, 0);
             std::cout << std::endl;
         }
 

@@ -318,7 +318,8 @@ void core_initialize(const char* config_path, PlatformCallbacks callbacks,
                      const char* working_dir_override);
 void core_shutdown(void);
 void core_on_message_received(const char* user, const char* text,
-                              const char* channel_id, const char* message_id);
+                              const char* channel_id, const char* message_id,
+                              const char* const* image_paths, int image_count);
 void core_on_timer_fired(int timer_id);
 void core_on_config_changed(void);
 void core_check_tasks(void);

@@ -489,18 +489,27 @@ void core_shutdown() {
 }
 
 void core_on_message_received(const char* user, const char* text,
-                              const char* channel_id, const char* message_id) {
+                              const char* channel_id, const char* message_id,
+                              const char* const* image_paths, int image_count) {
     std::string user_str = user ? user : "User";
     std::string text_str = text ? text : "";
     std::string chan_str = channel_id ? channel_id : "";
     std::string msg_str = message_id ? message_id : "";
+
+    std::vector<std::string> image_vec;
+    if (image_paths && image_count > 0) {
+        image_vec.reserve(static_cast<size_t>(image_count));
+        for (int i = 0; i < image_count; ++i) {
+            if (image_paths[i]) image_vec.emplace_back(image_paths[i]);
+        }
+    }
 
     // If no channel specified, use the configured Discord channel
     if (chan_str.empty()) {
         chan_str = g_config.discord_channel_id;
     }
 
-    if (text_str.empty()) return;
+    if (text_str.empty() && image_vec.empty()) return;
 
     // Add acknowledgment reaction (crab emoji by default)
     if (g_callbacks.add_reaction && !chan_str.empty() && !msg_str.empty()
@@ -523,7 +532,7 @@ void core_on_message_received(const char* user, const char* text,
     // Use "Local" for messages from the desktop UI, otherwise the Discord username
     std::string display_name = (user_str == "User") ? "Local" : user_str;
     std::string prompt = g_prompt->assemble(text_str, display_name, relevant_note_ids,
-                                            g_tools->get_definitions());
+                                            g_tools->get_definitions(), image_vec);
 
     // Execute backend
     std::string response = Backend::execute(g_config, prompt);
@@ -605,6 +614,13 @@ void core_on_message_received(const char* user, const char* text,
         && !g_config.assistant_emoji.empty()) {
         g_callbacks.remove_reaction(chan_str.c_str(), msg_str.c_str(),
                                    g_config.assistant_emoji.c_str());
+    }
+
+    // Delete any image attachments now that Claude has finished reading them.
+    // Runs after the tool-call follow-up so the second Backend::execute call
+    // still sees the files.
+    for (const auto& path : image_vec) {
+        std::remove(path.c_str());
     }
 }
 

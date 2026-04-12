@@ -15,11 +15,14 @@ public:
                     DataStore& reminders, DataStore& notes, ChatHistory& history,
                     CalendarManager* calendar = nullptr);
 
-    // Assemble full prompt for a user message, with relevant notes injected
+    // Assemble full prompt for a user message, with relevant notes injected.
+    // If image_paths is non-empty, an explicit "use the Read tool on these
+    // paths" instruction is appended to the user-message section.
     std::string assemble(std::string_view user_message,
                          std::string_view username,
                          const std::vector<std::string>& relevant_note_ids,
-                         const std::string& tool_definitions) const;
+                         const std::string& tool_definitions,
+                         const std::vector<std::string>& image_paths = {}) const;
 
     // Assemble a proactive prompt (no user message, but with an instruction)
     std::string assemble_proactive(std::string_view instruction,

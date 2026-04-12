@@ -25,7 +25,8 @@ void core_shutdown(void);
 
 // Discord events
 void core_on_message_received(const char* user, const char* text,
-                              const char* channel_id, const char* message_id);
+                              const char* channel_id, const char* message_id,
+                              const char* const* image_paths, int image_count);
 void core_on_connected(void);
 void core_on_disconnected(void);
 

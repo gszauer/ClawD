@@ -128,9 +128,12 @@ std::string Backend::execute(const Config& config, std::string_view prompt) {
                            config.backend_api_model, prompt);
     } else if (config.backend == "claude") {
         if (config.backend_cli_path.empty()) return "[Error: no backend CLI path configured]";
+        // Grant Read on working/tmp/** so Claude Code can open image
+        // attachments that core_on_message_received injects into the prompt.
+        std::string tools_arg = "WebSearch Read(" + config.working_directory + "/tmp/**)";
         std::string cmd = std::string(config.backend_cli_path)
-            + " --allowedTools WebSearch -p "
-            + shell_escape(prompt) + " 2>/dev/null";
+            + " --allowedTools " + shell_escape(tools_arg)
+            + " -p " + shell_escape(prompt) + " 2>/dev/null";
         return run_popen(cmd);
     } else {
         return execute_cli(config.backend_cli_path, prompt);

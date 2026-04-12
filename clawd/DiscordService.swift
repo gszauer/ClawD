@@ -271,28 +271,110 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
         let messageId = d["id"] as? String ?? ""
         let username = (d["author"] as? [String: Any])?["username"] as? String ?? "User"
 
-        // Check for audio attachments
+        // Partition attachments into audio and image lists.
+        var imageAttachments: [(url: String, filename: String)] = []
         if let attachments = d["attachments"] as? [[String: Any]] {
             for attachment in attachments {
                 guard let contentType = attachment["content_type"] as? String,
-                      contentType.hasPrefix("audio/"),
                       let urlStr = attachment["url"] as? String,
                       let filename = attachment["filename"] as? String
                 else { continue }
 
-                print("[Discord] Audio attachment from \(username): \(filename)")
-                downloadAndTranscribe(url: urlStr, filename: filename,
-                                      messageId: messageId, channelId: msgChannelId,
-                                      username: username)
+                if contentType.hasPrefix("audio/") {
+                    print("[Discord] Audio attachment from \(username): \(filename)")
+                    downloadAndTranscribe(url: urlStr, filename: filename,
+                                          messageId: messageId, channelId: msgChannelId,
+                                          username: username)
+                } else if contentType.hasPrefix("image/") {
+                    imageAttachments.append((url: urlStr, filename: filename))
+                }
             }
         }
 
-        guard !content.isEmpty else { return }
+        // Nothing to send if there's no text AND no images.
+        guard !content.isEmpty || !imageAttachments.isEmpty else { return }
+
+        if !imageAttachments.isEmpty {
+            print("[Discord] Message from \(username) (\(content.count) chars, \(imageAttachments.count) image(s))")
+            downloadImagesAndDispatch(images: imageAttachments,
+                                      content: content,
+                                      messageId: messageId,
+                                      channelId: msgChannelId,
+                                      username: username)
+            return
+        }
 
         print("[Discord] Message from \(username) (\(content.count) chars)")
 
         DispatchQueue.global(qos: .userInitiated).async {
-            core_on_message_received(username, content, msgChannelId, messageId)
+            core_on_message_received(username, content, msgChannelId, messageId, nil, 0)
+            DispatchQueue.main.async {
+                AppState.shared.refreshData()
+            }
+        }
+    }
+
+    private func downloadImagesAndDispatch(images: [(url: String, filename: String)],
+                                           content: String,
+                                           messageId: String,
+                                           channelId: String,
+                                           username: String) {
+        let tmpDir = AppState.shared.tmpDirectory
+        let group = DispatchGroup()
+        let pathsLock = NSLock()
+        var savedPaths: [String] = []
+
+        for (urlStr, filename) in images {
+            guard let url = URL(string: urlStr) else { continue }
+            let destPath = "\(tmpDir)/\(messageId)_\(filename)"
+            group.enter()
+            URLSession.shared.downloadTask(with: url) { tempUrl, _, error in
+                defer { group.leave() }
+                if let error {
+                    print("[Discord] Image download failed (\(filename)): \(error.localizedDescription)")
+                    return
+                }
+                guard let tempUrl else { return }
+                let dest = URL(fileURLWithPath: destPath)
+                do {
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.moveItem(at: tempUrl, to: dest)
+                    print("[Discord] Saved image: \(destPath)")
+                    pathsLock.lock()
+                    savedPaths.append(destPath)
+                    pathsLock.unlock()
+                } catch {
+                    print("[Discord] Failed to save image: \(error.localizedDescription)")
+                }
+            }.resume()
+        }
+
+        group.notify(queue: DispatchQueue.global(qos: .userInitiated)) {
+            if savedPaths.isEmpty && content.isEmpty {
+                print("[Discord] All image downloads failed and no text — dropping message")
+                return
+            }
+
+            // Bridge [String] → const char* const* via strdup so each C string
+            // stays alive for the duration of the call. strdup returns a mutable
+            // pointer; C expects const, so rebind at the array level.
+            let cPaths: [UnsafePointer<CChar>?] = savedPaths.map { str in
+                guard let m = strdup(str) else { return nil }
+                return UnsafePointer(m)
+            }
+            defer {
+                cPaths.forEach { ptr in
+                    if let ptr = ptr {
+                        free(UnsafeMutableRawPointer(mutating: ptr))
+                    }
+                }
+            }
+
+            cPaths.withUnsafeBufferPointer { buf in
+                core_on_message_received(username, content, channelId, messageId,
+                                         buf.baseAddress, Int32(savedPaths.count))
+            }
+
             DispatchQueue.main.async {
                 AppState.shared.refreshData()
             }
@@ -353,7 +435,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
 
             // Feed to the AI as a user message (blocks until LLM responds)
             let userMessage = "[Voice message transcript]: \(transcript)"
-            core_on_message_received(username, userMessage, channelId, messageId)
+            core_on_message_received(username, userMessage, channelId, messageId, nil, 0)
 
             // Post transcript to Discord after the AI response
             self?.sendChannelMessage("Transcribed audio: \(transcript)", to: channelId)
