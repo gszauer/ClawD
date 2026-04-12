@@ -296,6 +296,7 @@ final class DiscordService: NSObject, @unchecked Sendable, URLSessionWebSocketDe
 
         if !imageAttachments.isEmpty {
             print("[Discord] Message from \(username) (\(content.count) chars, \(imageAttachments.count) image(s))")
+            addReaction(channelId: msgChannelId, messageId: messageId, emoji: "\u{1F440}") // 👀
             downloadImagesAndDispatch(images: imageAttachments,
                                       content: content,
                                       messageId: messageId,
