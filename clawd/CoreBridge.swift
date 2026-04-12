@@ -116,6 +116,25 @@ final class CoreBridge: @unchecked Sendable {
         core_on_message_received(user, text, channelId, messageId, nil, 0)
     }
 
+    func sendMessage(user: String, text: String, imagePath: String,
+                     channelId: String = "", messageId: String = "") {
+        guard isRunning else { return }
+        guard let cPath = strdup(imagePath) else { return }
+        defer { free(cPath) }
+        var ptr: UnsafePointer<CChar>? = UnsafePointer(cPath)
+        withUnsafePointer(to: &ptr) { buf in
+            core_on_message_received(user, text, channelId, messageId, buf, 1)
+        }
+    }
+
+    func transcribeAudio(_ filePath: String) -> String? {
+        guard isRunning else { return nil }
+        guard let cStr = core_transcribe_audio(filePath) else { return nil }
+        let transcript = String(cString: cStr)
+        core_free_string(cStr)
+        return transcript
+    }
+
     /// Append a message as the assistant (no AI call) and log to chat history.
     func appendAssistantMessage(_ text: String) {
         guard isRunning else { return }

@@ -61,16 +61,6 @@ struct PromptsTab: View {
                                 .foregroundStyle(.orange)
                         }
                         Spacer()
-                        Button("Revert") {
-                            editText = loadedContent
-                        }
-                        .disabled(!isDirty)
-
-                        Button("Save") {
-                            saveCurrent()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!isDirty)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -89,6 +79,23 @@ struct PromptsTab: View {
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    Divider()
+
+                    HStack {
+                        Spacer()
+                        Button("Revert") {
+                            editText = loadedContent
+                        }
+                        .disabled(!isDirty)
+
+                        Button("Save") {
+                            saveCurrent()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!isDirty)
+                    }
+                    .padding(8)
                 }
             } else {
                 VStack(spacing: 8) {
