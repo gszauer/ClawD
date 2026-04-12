@@ -527,6 +527,11 @@ void core_initialize(const char* config_path, PlatformCallbacks callbacks,
         g_tools->register_handler(std::make_unique<GetWeatherHandler>());
     }
 
+    // Conditionally register the web_search tool.
+    if (g_config.web_search_enabled) {
+        g_tools->register_handler(std::make_unique<WebSearchHandler>());
+    }
+
     // Set up context
     g_ctx.config = &g_config;
     g_ctx.callbacks = &g_callbacks;
@@ -658,6 +663,8 @@ static void handle_message_impl(const std::string& user_str,
                     tool_emojis.push_back("\xF0\x9F\x8D\x96"); // 🍖
                 else if (call.name == "get_calendar" || call.name == "create_calendar_event" || call.name == "edit_calendar_event" || call.name == "delete_calendar_event")
                     tool_emojis.push_back("\xF0\x9F\x93\x85"); // 📅
+                else if (call.name == "web_search")
+                    tool_emojis.push_back("\xF0\x9F\x8C\x90"); // 🌐
             } else {
                 tool_results += "Tool " + call.name + ": unknown tool\n";
             }

@@ -205,6 +205,10 @@ A single `config.json` in the working directory. The native UI reads and writes 
   "heartbeat_interval_seconds": 30,
   "note_search_results": 5,
   "max_notes_in_index": 10000,
+  "weather_enabled": false,
+  "weather_zip": "",
+  "web_search_enabled": false,
+  "web_search_max_results": 5,
   "working_directory": "/Users/user/Desktop/ClawD/working",
   "notifications": {
     "daily_report": { "enabled": true, "time": "07:00" },
@@ -386,18 +390,23 @@ When a tool executes, the corresponding emoji is added to the user's Discord mes
 - Notes: memo
 - Meals: meat on bone
 - Calendar: calendar
+- Web search: globe
 
 The assistant emoji (crab by default) is added when processing starts and removed when the response is sent.
 
-### Available Tools (24 total)
+### Available Tools
 
 **Reminders:** `set_reminder`, `list_reminders`, `edit_reminder`, `delete_reminder`
 **Meals:** `add_meal`, `get_meals`, `get_meal_details`, `edit_meal`, `delete_meal`, `swap_meal`
 **Chores:** `add_chore`, `edit_chore`, `complete_chore`, `list_chores`, `get_chore_details`, `delete_chore`
 **Notes:** `save_note`, `edit_note`, `search_notes`, `list_notes`, `delete_note`
 **Calendar:** `get_calendar`, `create_calendar_event`, `edit_calendar_event`, `delete_calendar_event`
+**Weather (optional):** `get_weather` — registered only when `weather_enabled` is true and a zip is set.
+**Web Search (optional):** `web_search` — registered only when `web_search_enabled` is true.
 
 `get_calendar` queries Google Calendar live for any date range (past or future). `create_calendar_event` supports recurrence (`DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`). When Google isn't connected, all calendar tools fall back to local-only storage with events flagged as `local_only`.
+
+`web_search(query, question)` does a full mini-agent run inside a single tool call: (1) HTTPS GET to DuckDuckGo Lite via the Swift HTTP callback, (2) parse the top N result URLs (N = `web_search_max_results`, default 5, clamped 1–10), (3) fetch each page and strip HTML to plain text, (4) build a fresh summarization prompt with the stripped page text and the user's question, (5) run that prompt through `local_gemma_generate()` in an isolated pass that clears the KV cache at entry and doesn't see the main chat history or tool list. The tool return value is the summary plus a numbered source list, which is then fed back into the main conversation as normal tool output. On any partial failure (no results, all fetches dead, summarizer returned nothing) the tool returns a `[web_search error: ...]`-prefixed block containing the raw search snippets or stripped page text so the main model can still answer with visibly degraded data. Takes several seconds end-to-end.
 
 The UI also calls tools directly via `core_execute_tool()` for add/edit/delete operations, bypassing the AI entirely.
 

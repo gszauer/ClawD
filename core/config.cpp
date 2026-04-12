@@ -73,6 +73,9 @@ bool Config::load(const std::string& path) {
                                    cJSON_GetObjectItemCaseSensitive(root, "weather_lon")->valuedouble : 0.0;
     weather_cached_zip           = json_string(root, "weather_cached_zip");
 
+    web_search_enabled           = json_bool(root, "web_search_enabled", true);
+    web_search_max_results       = json_int(root, "web_search_max_results", 5);
+
     chat_history_exchanges       = json_int(root, "chat_history_exchanges", 25);
     heartbeat_interval_seconds   = json_int(root, "heartbeat_interval_seconds", 30);
     note_search_results          = json_int(root, "note_search_results", 5);

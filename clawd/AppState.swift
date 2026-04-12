@@ -106,6 +106,10 @@ final class AppState {
     var weatherEnabled: Bool = false
     var weatherZip: String = ""
 
+    // Web Search (DuckDuckGo Lite, no API key)
+    var webSearchEnabled: Bool = true
+    var webSearchMaxResults: Int = 5
+
     // Notification toggles
     var dailyReportEnabled: Bool = false
     var dailyReportTime: Date = AppState.timeFromHHMM("07:00")
@@ -149,6 +153,8 @@ final class AppState {
         whisperModelPath = json["whisper_model_path"] as? String ?? ""
         weatherEnabled = json["weather_enabled"] as? Bool ?? false
         weatherZip = json["weather_zip"] as? String ?? ""
+        webSearchEnabled = json["web_search_enabled"] as? Bool ?? false
+        webSearchMaxResults = json["web_search_max_results"] as? Int ?? 5
 
         scanAvailableModels()
         assistantName = json["assistant_name"] as? String ?? "ClawD"
@@ -196,6 +202,8 @@ final class AppState {
             "audio_backend": audioBackend,
             "weather_enabled": weatherEnabled,
             "weather_zip": weatherZip,
+            "web_search_enabled": webSearchEnabled,
+            "web_search_max_results": webSearchMaxResults,
             "whisper_model_path": whisperModelPath,
             "assistant_name": assistantName,
             "assistant_emoji": assistantEmoji,

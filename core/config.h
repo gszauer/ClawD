@@ -35,6 +35,10 @@ struct Config {
     double      weather_lon = 0.0;       // cached longitude from geocoding
     std::string weather_cached_zip;      // the zip that lat/lon was derived from
 
+    // Web Search (DuckDuckGo Lite, no API key needed)
+    bool web_search_enabled = true;
+    int  web_search_max_results = 5;     // number of pages to fetch and summarize
+
     // Tuning
     int chat_history_exchanges = 25;
     int heartbeat_interval_seconds = 30;

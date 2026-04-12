@@ -187,6 +187,21 @@ public:
     std::string execute(const std::vector<std::string>& params) override;
 };
 
+// --- Web Search Tool ---
+
+class WebSearchHandler : public ToolHandler {
+public:
+    std::string_view name() const override { return "web_search"; }
+    std::string description() const override {
+        return "web_search(query: string, question: string)\n"
+               "  Search the web for the given query, fetch the top pages, and\n"
+               "  return a summary that answers the question. Slow (several seconds).\n"
+               "  Use for current events, facts outside the model's knowledge, or\n"
+               "  anything requiring up-to-date info.";
+    }
+    std::string execute(const std::vector<std::string>& params) override;
+};
+
 // --- Note Tools ---
 
 class SaveNoteHandler : public ToolHandler {

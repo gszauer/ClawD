@@ -238,7 +238,39 @@ The **Calendar Sync Interval** (in the Calendar section) controls how often even
 
 ---
 
-## 7. Advanced Settings
+## 7. Web Search (Optional)
+
+Gives the AI a `web_search` tool so it can answer questions about current events and anything outside the local model's knowledge. **No API key required** — it hits DuckDuckGo's lightweight HTML endpoint.
+
+### Enable it
+
+In the General tab, toggle **Web Search** on. Use the stepper to pick how many results to fetch (1–10, default 5). More results means a slower tool call but broader coverage.
+
+### How it works
+
+When the AI emits `<<TOOL:web_search("query", "question")>>`:
+
+1. ClawD sends the query to `https://html.duckduckgo.com/lite/` over HTTPS (via NSURLSession on the Swift side — the C++ `http_client` is plain HTTP only and can't reach most of the web directly).
+2. It parses the top N result URLs out of the returned HTML.
+3. It fetches each page, strips HTML down to plain text, and truncates each to about 4 KB.
+4. It assembles a **fresh** prompt — no chat history, no tool list — containing the stripped pages plus the user's question, and runs it through the **same local Gemma model** on a separate pass. This keeps the main conversation context small and avoids polluting it with raw HTML.
+5. The summary (plus a numbered source list) is returned to the AI as the tool result, and the AI incorporates it into its reply.
+
+Expect a web_search call to take several seconds — it's doing network I/O plus a second inference pass. The 🌐 reaction on the user's message indicates the tool fired.
+
+### Degraded-data fallback
+
+If DuckDuckGo blocks the request, returns no results, every page fetch fails, or the summarizer returns nothing, the tool falls back to the raw search snippets or stripped page text, prefixed with a visible `[web_search error: ...]` marker so the main model knows it's working from incomplete data and can tell you so.
+
+### Caveats
+
+- DuckDuckGo may occasionally rate-limit or return a captcha page; the tool treats that as a failed search and returns an error.
+- The HTML stripper is heuristic — text from JavaScript-heavy sites (SPAs that render client-side) may come back nearly empty. Static pages work best.
+- Page content is not cached between calls; every `web_search` hits the network fresh.
+
+---
+
+## 8. Advanced Settings
 
 | Setting | Default | What It Controls |
 |---------|---------|-----------------|
@@ -249,7 +281,7 @@ The **Calendar Sync Interval** (in the Calendar section) controls how often even
 
 ---
 
-## 8. Prompt Templates
+## 9. Prompt Templates
 
 The AI's personality and instructions are editable files in `working/prompts/`:
 
@@ -261,7 +293,7 @@ Edit these with any text editor. The defaults are created on first start. If you
 
 ---
 
-## 9. Saving and Loading
+## 10. Saving and Loading
 
 - Click **Save Config** to write all settings to `working/config.json`
 - Config is auto-loaded on app launch if the file exists

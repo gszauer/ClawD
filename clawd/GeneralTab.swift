@@ -160,6 +160,7 @@ struct GeneralTab: View {
                         notifCardStepper("Calendar", icon: "calendar.badge.clock", enabled: $state.calendarHeadsUpEnabled,
                                          value: $state.calendarHeadsUpMinutes, range: 5...120, step: 5, unit: "min")
                         weatherCard
+                        webSearchCard
                     }
                 }
 
@@ -439,6 +440,27 @@ struct GeneralTab: View {
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 8).fill(
             state.weatherEnabled ? Color.accentColor.opacity(0.06) : Color.clear
+        ))
+    }
+
+    private var webSearchCard: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "globe")
+                .font(.callout)
+                .foregroundStyle(state.webSearchEnabled ? .primary : .secondary)
+                .frame(width: 20)
+            Toggle("Web Search", isOn: $state.webSearchEnabled)
+                .font(.callout)
+            Spacer()
+            Stepper("\(state.webSearchMaxResults) results",
+                    value: $state.webSearchMaxResults, in: 1...10)
+                .font(.caption)
+                .disabled(!state.webSearchEnabled)
+                .scaleEffect(0.85, anchor: .trailing)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(
+            state.webSearchEnabled ? Color.accentColor.opacity(0.06) : Color.clear
         ))
     }
 

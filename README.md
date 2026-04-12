@@ -217,6 +217,16 @@ The AI can invoke these tools by including `<<TOOL:name(params)>>` in its respon
 | `edit_calendar_event` | id, title, datetime, duration_minutes | Edit an event |
 | `delete_calendar_event` | id | Delete an event |
 
+### Weather
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `get_weather` | date | Forecast for a YYYY-MM-DD date (Open-Meteo, no key). Registered only when Weather is enabled. |
+
+### Web Search
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `web_search` | query, question | Search the web (DuckDuckGo Lite, no key), fetch the top pages, and summarize them against the question using a fresh pass of the local model. Registered only when Web Search is enabled. Slow — takes several seconds. |
+
 ## Prompt Templates
 
 The system prompt and user profile are stored as editable markdown files in `working/prompts/`. Changes take effect on next app start.

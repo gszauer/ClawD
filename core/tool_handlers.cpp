@@ -6,6 +6,7 @@
 #include "note_search.h"
 #include "task_queue.h"
 #include "http_client.h"
+#include "local_gemma.h"
 #include "cJSON.h"
 
 #include <sstream>
@@ -15,6 +16,7 @@
 #include <ctime>
 #include <algorithm>
 #include <cstdlib>
+#include <cctype>
 
 // --- Utility ---
 
@@ -808,6 +810,368 @@ std::string GetWeatherHandler::execute(const std::vector<std::string>& params) {
     }
 
     cJSON_Delete(root);
+    return result;
+}
+
+// --- Web Search Handler ---
+//
+// Flow: DuckDuckGo Lite HTML search → parse top N result URLs → fetch each
+// page via PlatformCallbacks → strip HTML → feed everything into a fresh
+// local_gemma_generate() pass with a summarization prompt. All HTTP goes
+// through the Swift side because core/http_client.cpp is plain HTTP only
+// and most of the web is HTTPS now.
+
+struct SearchHit {
+    std::string title;
+    std::string url;
+    std::string snippet;  // short description from DDG Lite
+};
+
+static std::string url_encode(std::string_view s) {
+    std::string out;
+    out.reserve(s.size() * 3);
+    char buf[4];
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += static_cast<char>(c);
+        } else if (c == ' ') {
+            out += '+';
+        } else {
+            snprintf(buf, sizeof(buf), "%%%02X", c);
+            out += buf;
+        }
+    }
+    return out;
+}
+
+// Decode the HTML entities we care about. Anything we don't recognize is
+// passed through as-is — the goal is plain readable text for the summarizer,
+// not a spec-compliant parser.
+static std::string html_decode_entities(std::string_view in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ) {
+        if (in[i] != '&') { out += in[i++]; continue; }
+        size_t semi = in.find(';', i + 1);
+        if (semi == std::string_view::npos || semi - i > 10) { out += in[i++]; continue; }
+        std::string_view ent = in.substr(i + 1, semi - i - 1);
+        if      (ent == "amp")   out += '&';
+        else if (ent == "lt")    out += '<';
+        else if (ent == "gt")    out += '>';
+        else if (ent == "quot")  out += '"';
+        else if (ent == "apos" || ent == "#39") out += '\'';
+        else if (ent == "nbsp")  out += ' ';
+        else if (!ent.empty() && ent[0] == '#') {
+            int code = 0;
+            if (ent.size() > 1 && (ent[1] == 'x' || ent[1] == 'X'))
+                code = static_cast<int>(strtol(std::string(ent.substr(2)).c_str(), nullptr, 16));
+            else
+                code = atoi(std::string(ent.substr(1)).c_str());
+            if (code > 0 && code < 128) out += static_cast<char>(code);
+            else out += ' ';  // collapse non-ASCII to a space
+        }
+        else { out.append(in.data() + i, semi - i + 1); i = semi + 1; continue; }
+        i = semi + 1;
+    }
+    return out;
+}
+
+// Strip HTML down to plain text: drop <script> and <style> blocks wholesale,
+// drop remaining tags, decode entities, collapse whitespace, truncate.
+static std::string html_strip(std::string_view html, size_t max_bytes) {
+    std::string stripped;
+    stripped.reserve(html.size());
+
+    auto ieq = [](std::string_view a, std::string_view b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (std::tolower(static_cast<unsigned char>(a[i])) !=
+                std::tolower(static_cast<unsigned char>(b[i]))) return false;
+        return true;
+    };
+
+    size_t i = 0;
+    bool in_tag = false;
+    while (i < html.size()) {
+        char c = html[i];
+        if (!in_tag && c == '<') {
+            // Check for script/style block — skip to matching close tag.
+            if (i + 7 < html.size() && ieq(html.substr(i + 1, 6), "script")) {
+                size_t end = html.find("</script", i + 7);
+                if (end == std::string_view::npos) break;
+                i = html.find('>', end);
+                if (i == std::string_view::npos) break;
+                ++i;
+                continue;
+            }
+            if (i + 6 < html.size() && ieq(html.substr(i + 1, 5), "style")) {
+                size_t end = html.find("</style", i + 6);
+                if (end == std::string_view::npos) break;
+                i = html.find('>', end);
+                if (i == std::string_view::npos) break;
+                ++i;
+                continue;
+            }
+            in_tag = true;
+            ++i;
+            continue;
+        }
+        if (in_tag) {
+            if (c == '>') in_tag = false;
+            ++i;
+            continue;
+        }
+        stripped += c;
+        ++i;
+    }
+
+    std::string decoded = html_decode_entities(stripped);
+
+    // Collapse whitespace runs to a single space, preserve newlines as
+    // paragraph breaks (collapsed too, but kept separate from spaces).
+    std::string out;
+    out.reserve(decoded.size());
+    bool prev_space = false;
+    for (char c : decoded) {
+        if (c == '\r') continue;
+        if (c == '\n' || c == '\t') c = ' ';
+        if (c == ' ') {
+            if (!prev_space && !out.empty()) out += ' ';
+            prev_space = true;
+        } else {
+            out += c;
+            prev_space = false;
+        }
+    }
+    // Trim
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+
+    if (out.size() > max_bytes) {
+        out.resize(max_bytes);
+        out += "...";
+    }
+    return out;
+}
+
+// Scan DuckDuckGo Lite HTML for result rows. The Lite endpoint emits anchors
+// like <a rel="nofollow" href="...">Title</a> followed (later in the table)
+// by a <td class="result-snippet">…</td>. We walk the string top to bottom
+// and pair them up in order.
+static std::vector<SearchHit> parse_ddg_lite(std::string_view html, int max_results) {
+    std::vector<SearchHit> hits;
+    if (max_results <= 0) return hits;
+
+    size_t pos = 0;
+    while (static_cast<int>(hits.size()) < max_results) {
+        size_t a = html.find("rel=\"nofollow\"", pos);
+        if (a == std::string_view::npos) break;
+        size_t href = html.find("href=\"", a);
+        if (href == std::string_view::npos) break;
+        href += 6;
+        size_t href_end = html.find('"', href);
+        if (href_end == std::string_view::npos) break;
+        std::string url(html.substr(href, href_end - href));
+
+        // DDG often wraps URLs in a redirect: //duckduckgo.com/l/?uddg=<encoded>&rut=...
+        // Pull the uddg param out so we get the real target.
+        if (auto u = url.find("uddg="); u != std::string::npos) {
+            size_t start = u + 5;
+            size_t end = url.find('&', start);
+            std::string enc = url.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            // Percent-decode.
+            std::string real;
+            real.reserve(enc.size());
+            for (size_t j = 0; j < enc.size(); ++j) {
+                if (enc[j] == '%' && j + 2 < enc.size()) {
+                    char hex[3] = { enc[j + 1], enc[j + 2], 0 };
+                    real += static_cast<char>(strtol(hex, nullptr, 16));
+                    j += 2;
+                } else if (enc[j] == '+') {
+                    real += ' ';
+                } else {
+                    real += enc[j];
+                }
+            }
+            if (!real.empty() && real.front() != '/') url = real;
+        }
+
+        // Title is the anchor text up to </a>.
+        size_t title_start = html.find('>', href_end);
+        if (title_start == std::string_view::npos) break;
+        ++title_start;
+        size_t title_end = html.find("</a>", title_start);
+        if (title_end == std::string_view::npos) break;
+        std::string title = html_strip(html.substr(title_start, title_end - title_start), 256);
+
+        // Snippet: look for the next result-snippet cell between here and the next result row.
+        std::string snippet;
+        size_t next_a = html.find("rel=\"nofollow\"", title_end);
+        size_t snip_tag = html.find("class=\"result-snippet\"", title_end);
+        if (snip_tag != std::string_view::npos &&
+            (next_a == std::string_view::npos || snip_tag < next_a)) {
+            size_t snip_open = html.find('>', snip_tag);
+            if (snip_open != std::string_view::npos) {
+                ++snip_open;
+                size_t snip_close = html.find("</td>", snip_open);
+                if (snip_close != std::string_view::npos)
+                    snippet = html_strip(html.substr(snip_open, snip_close - snip_open), 512);
+            }
+        }
+
+        if (!url.empty() && (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0)) {
+            hits.push_back({ std::move(title), std::move(url), std::move(snippet) });
+        }
+        pos = title_end + 4;
+    }
+    return hits;
+}
+
+// Same async-to-sync wrapper as WeatherSyncCtx, but reusable here so each
+// HTTP call in the web_search flow doesn't duplicate boilerplate.
+struct WebHttpCtx {
+    std::string response;
+    int status = 0;
+    bool done = false;
+    std::mutex mtx;
+    std::condition_variable cv;
+};
+
+static void web_http_callback(const char* response, int status, void* ctx) {
+    auto* sync = static_cast<WebHttpCtx*>(ctx);
+    std::lock_guard<std::mutex> lk(sync->mtx);
+    sync->response = response ? response : "";
+    sync->status = status;
+    sync->done = true;
+    sync->cv.notify_one();
+}
+
+static std::string web_http_get(PlatformCallbacks* cb, const std::string& url) {
+    if (!cb || !cb->http_request) return "";
+    WebHttpCtx ctx;
+    // Some servers 403 without a UA. The headers field accepts "Header: value\r\n..."
+    // on the Swift side, so pass a reasonable browser-ish UA.
+    const char* headers =
+        "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15\r\n";
+    cb->http_request("GET", url.c_str(), headers, nullptr, web_http_callback, &ctx);
+    std::unique_lock<std::mutex> lk(ctx.mtx);
+    ctx.cv.wait(lk, [&] { return ctx.done; });
+    if (ctx.status < 200 || ctx.status >= 300) return "";
+    return ctx.response;
+}
+
+// Build a fallback block containing raw search snippets, prefixed with the
+// given error marker. The outer model sees the [web_search error: ...] prefix
+// and knows it's working from degraded data.
+static std::string build_snippet_fallback(const std::string& error_prefix,
+                                          const std::vector<SearchHit>& hits) {
+    std::string out = error_prefix;
+    if (hits.empty()) return out;
+    out += "\n\n";
+    for (size_t i = 0; i < hits.size(); ++i) {
+        out += "[" + std::to_string(i + 1) + "] " + hits[i].title + "\n";
+        out += hits[i].url + "\n";
+        if (!hits[i].snippet.empty()) out += hits[i].snippet + "\n";
+        out += "\n";
+    }
+    while (!out.empty() && out.back() == '\n') out.pop_back();
+    return out;
+}
+
+std::string WebSearchHandler::execute(const std::vector<std::string>& params) {
+    if (!ctx_ || !ctx_->config || !ctx_->callbacks) return "Error: web_search not available";
+    if (!ctx_->config->web_search_enabled) return "Error: web_search is not enabled";
+    if (params.empty()) return "Error: web_search requires a query";
+
+    const std::string& query = params[0];
+    const std::string question = params.size() > 1 && !params[1].empty() ? params[1] : query;
+    const int max_results = std::max(1, std::min(10, ctx_->config->web_search_max_results));
+
+    // Step 1: search.
+    std::string search_url = "https://html.duckduckgo.com/lite/?q=" + url_encode(query);
+    std::string search_html = web_http_get(ctx_->callbacks, search_url);
+    if (search_html.empty()) {
+        return "[web_search error: search request failed for '" + query + "']";
+    }
+
+    // Step 2: parse result list.
+    std::vector<SearchHit> hits = parse_ddg_lite(search_html, max_results);
+    if (hits.empty()) {
+        return "[web_search error: no results for '" + query + "']";
+    }
+
+    // Step 3: fetch each page and strip to plain text.
+    struct FetchedPage {
+        std::string title;
+        std::string url;
+        std::string text;
+    };
+    std::vector<FetchedPage> pages;
+    pages.reserve(hits.size());
+    for (const auto& hit : hits) {
+        std::string body = web_http_get(ctx_->callbacks, hit.url);
+        if (body.empty()) continue;
+        std::string text = html_strip(body, 4096);
+        if (text.size() < 80) continue;  // skip near-empty pages
+        pages.push_back({ hit.title, hit.url, std::move(text) });
+    }
+
+    if (pages.empty()) {
+        return build_snippet_fallback(
+            "[web_search error: could not fetch any pages, showing raw search result snippets]",
+            hits);
+    }
+
+    // Step 4: assemble a fresh summarization prompt. No chat history, no
+    // tool list — local_gemma_generate wraps this as a single user turn.
+    std::string summary_prompt =
+        "You are summarizing web pages to answer a user's question.\n\n"
+        "## Question\n" + question + "\n\n"
+        "## Pages\n";
+    for (size_t i = 0; i < pages.size(); ++i) {
+        summary_prompt += "### [" + std::to_string(i + 1) + "] " + pages[i].title +
+                          " \u2014 " + pages[i].url + "\n" +
+                          pages[i].text + "\n\n";
+    }
+    summary_prompt +=
+        "Answer the question using only the information above. Be concise. "
+        "Cite pages by their number in brackets, e.g. [1], [2]. If the pages "
+        "don't contain the answer, say so.";
+
+    // Step 5: run summarization in a fresh context. local_gemma_generate
+    // clears the KV cache at entry, and the outer message-path follow-up
+    // will clear again when it runs, so this is safe to call from inside a
+    // tool handler.
+    std::string summary = local_gemma_generate(summary_prompt, "", /*max_tokens=*/1024);
+
+    auto is_blank_or_error = [](const std::string& s) {
+        if (s.empty()) return true;
+        if (s.rfind("[Error:", 0) == 0) return true;
+        return s.find_first_not_of(" \n\r\t") == std::string::npos;
+    };
+
+    if (is_blank_or_error(summary)) {
+        // Fall back to raw snippets plus the stripped page text so the main
+        // model can still act on something.
+        std::string fallback =
+            "[web_search error: summarizer returned no text, showing raw page excerpts]\n\n";
+        for (size_t i = 0; i < pages.size(); ++i) {
+            fallback += "### [" + std::to_string(i + 1) + "] " + pages[i].title +
+                        " - " + pages[i].url + "\n" +
+                        pages[i].text + "\n\n";
+        }
+        while (!fallback.empty() && fallback.back() == '\n') fallback.pop_back();
+        return fallback;
+    }
+
+    // Append a source list so the main model (and the chat log reader) can
+    // see what was actually fetched.
+    std::string result = summary + "\n\nSources:\n";
+    for (size_t i = 0; i < pages.size(); ++i) {
+        result += "[" + std::to_string(i + 1) + "] " + pages[i].title +
+                  " - " + pages[i].url + "\n";
+    }
+    while (!result.empty() && result.back() == '\n') result.pop_back();
     return result;
 }
 
